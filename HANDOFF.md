@@ -8,13 +8,15 @@ file and description the user will provide.
 
 This workspace is a monorepo with two parts:
 
-- **`app/`, `api/`, `tests/`, `scripts/`** - a FastAPI backend, done and tested
-  (26 pytest tests passing). It reads/writes an Excel workbook
+- **`app/`, `api/`, `tests/`, `scripts/`** - a FastAPI backend, done and
+  tested (27 pytest tests passing). It reads/writes an Excel workbook
   (`Personal_Finance_{year}_V1.xlsx`) stored in Vercel Blob, exposing
   transactions CRUD, income, monthly plan, summary, setup, and a `/sync`
-  batch endpoint with idempotency. Full endpoint contract:
-  **`docs/openapi.json`** - read this before writing any HTTP client code in
-  Flutter; don't guess field names or paths.
+  batch endpoint with idempotency. **Live and working**:
+  `https://personal-finance-omega-fawn.vercel.app` (verified end to end,
+  including a real transaction create/delete round trip). Full endpoint
+  contract: **`docs/openapi.json`** - read this before writing any HTTP
+  client code in Flutter; don't guess field names or paths.
 - **`mobile_app/`** - an empty `flutter create` scaffold (package name
   `money_handler`), not yet touched. This is your responsibility.
 
@@ -41,50 +43,55 @@ offline-first behavior). In short, from the spec:
 
 ## Known gaps to fix or flag - don't assume these are solved
 
-1. **The deployed API is currently broken.** Live URL:
-   `https://personal-finance-omega-fawn.vercel.app` - `/health` returns 200,
-   but any data endpoint (e.g. `/api/v1/setup/2026`) returns 500. This is
-   because the Vercel project's environment variables were never set:
-   `FINANCE_API_KEY`, `FINANCE_STORAGE_BACKEND=vercel_blob`,
-   `BLOB_READ_WRITE_TOKEN`. Ask the user to set these in the Vercel
-   dashboard (Project Settings -> Environment Variables) before building
-   against the live URL - or point the app at a local
-   `uvicorn app.main:app` instance during development instead.
-2. **`Personal_Finance_TEMPLATE.xlsx` was never uploaded to the production
-   Blob store** - only the 2026 workbook was, during manual testing. Lazy
-   creation of a new year's file (e.g. when 2027 starts) will fail in
-   production until this template is uploaded. Confirm with the user before
-   uploading anything to their real Blob store.
-3. **Two pre-existing bugs in the workbook's own Excel formulas** (not
+1. **`Personal_Finance_TEMPLATE.xlsx` was never uploaded to the production
+   Blob store** - only the 2026 workbook was. Lazy creation of a new year's
+   file (e.g. when 2027 starts) will fail in production until this template
+   is uploaded. Confirm with the user before uploading anything to their
+   real Blob store.
+2. **Two pre-existing bugs in the workbook's own Excel formulas** (not
    touched, by design - see git log): a row-41-vs-43 off-by-one in some
    SUMIFS formulas, and "Planned Investments" (`G8`) summing the wrong
    column. The API's own `/summary` endpoint computes correct values
    independently, so this shouldn't affect you, but don't be confused if you
    ever open the raw `.xlsx` and see different numbers there.
-4. **`tbl_Subcategories` in the real workbook is already at its row
-   capacity** (25/25). `POST /setup/{year}/subcategories` will correctly
-   return `409 table_full` until the user expands that table in Excel
-   themselves - this is expected, not a bug to fix.
+3. **The SETUP sheet had a real structural bug** (two Excel tables
+   overlapping the same cells) that leaked garbage data and silently hid
+   real subcategories (Food/Fast Food, Food/Snacks, Motorcycle/Fuel,
+   Motorcycle/Oil, Motorcycle/Maintenance). This was found and fixed -
+   `tbl_Subcategories` now lives at `H7:I45` with real spare capacity - see
+   `scripts/relocate_subcategories_table.py` and the git log for the full
+   story, including a mistake made and reverted along the way. Nothing left
+   to do here, just context in case you see references to the old layout
+   anywhere.
+4. Editing the real workbook's structure (like #3) was done with the user's
+   explicit permission, on their real file, verified via a local throwaway
+   copy first. Don't casually extend that permission to future structural
+   changes without asking again.
 
 ## Working agreements from the backend build (keep applying these)
 
 - Don't over-engineer for a personal, single-user app - no auth beyond the
   static API key, no premature abstractions.
 - Verify claims by actually running things (`flutter run`, hitting the
-  local API), not by inspecting code and assuming it works.
+  local or live API), not by inspecting code and assuming it works.
 - Before committing: real financial files must never enter git. Check
   `git status` and the diff for anything under `data/` or `*.xlsx` before
   every commit.
 - This session's git remote is public
   (`https://github.com/rayen231/personal-finance.git`) - treat that as a
   constraint on anything you commit.
+- Before editing the real workbook's structure (not just its data), test
+  the change on a throwaway copy first and show/confirm the result - this
+  project already had one near-miss where a "corrected" guess overwrote
+  real config data before being caught and reverted.
 
 ## Suggested first steps for the new session
 
 1. Read `docs/openapi.json` in full.
-2. Ask the user for: the spec document, the real API key, and whether to
-   develop against local `uvicorn` or the (currently broken) live URL.
-3. Fix the Vercel env var gap if the user wants the live URL working now.
+2. Confirm the live API still works: `curl
+   https://personal-finance-omega-fawn.vercel.app/health` and one
+   authenticated data endpoint with the real API key from the user.
+3. Ask the user for: the spec document and the real API key.
 4. Scaffold the Flutter project structure (models, API client, local SQLite
    schema, sync queue) before writing screens.
 5. Get one end-to-end path working first (e.g. Add Transaction -> local
