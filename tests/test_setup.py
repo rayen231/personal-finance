@@ -13,13 +13,12 @@ def test_get_setup_full(client: TestClient):
     assert len(body["recurring_expenses"]) == 6
 
 
-def test_subcategories_excludes_overlapping_table_rows(client: TestClient):
-    # The real workbook has tbl_Subcategories declared as E4:F29, but rows
-    # 15-19 genuinely belong to tbl_Classifications (E15:E19) and rows 24-29
-    # to tbl_Recurring (A24:F30) - not blank/unused Subcategories rows. This
-    # asserts the API never leaks that overlapping content as fake
-    # (category, subcategory) pairs, and that real Classification values
-    # aren't lost either.
+def test_subcategories_and_classifications_are_clean(client: TestClient):
+    # tbl_Subcategories originally overlapped tbl_Classifications (E15:E19)
+    # and tbl_Recurring (A24:F30) in the source workbook, leaking their
+    # content as fake (category, subcategory) pairs, before being relocated
+    # to a dedicated H:I range (see scripts/relocate_subcategories_table.py).
+    # This is a regression guard for that fix.
     body = client.get("/api/v1/setup/2026").json()
     categories_seen = {pair["category"] for pair in body["subcategories"]}
     assert "Classification" not in categories_seen
@@ -28,6 +27,12 @@ def test_subcategories_excludes_overlapping_table_rows(client: TestClient):
         "Necessary — Planned", "Necessary — Unplanned",
         "Unnecessary — Planned", "Unnecessary — Unplanned",
     }
+    # Previously unreadable due to the overlap - recovered per spec section 7.
+    assert {"category": "Food", "subcategory": "Fast Food"} in body["subcategories"]
+    assert {"category": "Food", "subcategory": "Snacks"} in body["subcategories"]
+    assert {"category": "Motorcycle", "subcategory": "Fuel"} in body["subcategories"]
+    assert {"category": "Motorcycle", "subcategory": "Oil"} in body["subcategories"]
+    assert {"category": "Motorcycle", "subcategory": "Maintenance"} in body["subcategories"]
 
 
 def test_recurring_expense_monthly_reserve_computed(client: TestClient):
@@ -47,32 +52,9 @@ def test_get_individual_setup_lists(client: TestClient):
     assert "Shopping" in client.get("/api/v1/setup/2026/free-money-categories").json()
 
 
-def test_add_subcategory_rejected_when_table_full(client: TestClient):
-    # The real tbl_Subcategories table is already at its 25/25 row capacity,
-    # so this exercises the "block full" rule rather than a bug: adding
-    # further categories requires expanding the table in Excel first.
-    resp = client.post(
-        "/api/v1/setup/2026/subcategories", json={"category": "Food", "subcategory": "Yogurt"}
-    )
-    assert resp.status_code == 409
-    assert resp.json()["detail"]["error"] == "table_full"
-
-
-def test_add_subcategory_succeeds_with_spare_row(client: TestClient, data_dir):
-    import openpyxl
-
-    path = data_dir / "Personal_Finance_2026_V1.xlsx"
-    wb = openpyxl.load_workbook(path)
-    ws = wb["SETUP"]
-    # Row 29 is actually inside tbl_Recurring's real range (a pre-existing
-    # overlap with tbl_Subcategories' overly-large declared ref - see
-    # setup_service._rows_claimed_by_other_tables), so it no longer counts
-    # as an available Subcategories row. Row 14 is a genuinely free,
-    # non-excluded row once its stray label is cleared.
-    ws["E14"] = None
-    ws["F14"] = None
-    wb.save(path)
-
+def test_add_subcategory_succeeds_with_spare_row(client: TestClient):
+    # tbl_Subcategories was relocated to H7:I45 with real spare capacity
+    # (20 blank rows) specifically so this works without any workaround.
     resp = client.post(
         "/api/v1/setup/2026/subcategories", json={"category": "Food", "subcategory": "Yogurt"}
     )
@@ -91,6 +73,27 @@ def test_add_subcategory_succeeds_with_spare_row(client: TestClient, data_dir):
         },
     )
     assert tx.status_code == 201
+
+
+def test_add_subcategory_rejected_when_table_full(client: TestClient, data_dir):
+    import openpyxl
+
+    path = data_dir / "Personal_Finance_2026_V1.xlsx"
+    wb = openpyxl.load_workbook(path)
+    ws = wb["SETUP"]
+    # Fill every spare row (26-45) so the table genuinely has no room left,
+    # to exercise the "block full" rule itself rather than relying on
+    # whatever the real workbook's current capacity happens to be.
+    for row in range(26, 46):
+        ws.cell(row=row, column=8, value="Food")
+        ws.cell(row=row, column=9, value=f"Filler{row}")
+    wb.save(path)
+
+    resp = client.post(
+        "/api/v1/setup/2026/subcategories", json={"category": "Food", "subcategory": "Yogurt"}
+    )
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["error"] == "table_full"
 
 
 def test_add_subcategory_unknown_category_rejected(client: TestClient):
