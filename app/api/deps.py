@@ -19,7 +19,7 @@ def require_api_key(
 
 def get_repo(settings: Settings = Depends(get_settings)) -> WorkbookRepository:
     storage = get_storage_service(settings)
-    sync_state = SyncStateStore(settings.local_data_dir / ".sync_state")
+    sync_state = SyncStateStore(storage)
     return WorkbookRepository(storage, settings, sync_state)
 
 

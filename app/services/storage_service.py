@@ -35,7 +35,7 @@ class StorageService(ABC):
     def download(self, filename: str) -> bytes: ...
 
     @abstractmethod
-    def upload(self, filename: str, content: bytes) -> None: ...
+    def upload(self, filename: str, content: bytes, content_type: str | None = None) -> None: ...
 
 
 class LocalFileStorage(StorageService):
@@ -55,7 +55,7 @@ class LocalFileStorage(StorageService):
             raise WorkbookNotFoundError(filename)
         return path.read_bytes()
 
-    def upload(self, filename: str, content: bytes) -> None:
+    def upload(self, filename: str, content: bytes, content_type: str | None = None) -> None:
         path = self._path(filename)
         tmp_path = path.with_suffix(path.suffix + ".tmp")
         tmp_path.write_bytes(content)
@@ -104,13 +104,13 @@ class VercelBlobStorage(StorageService):
         resp.raise_for_status()
         return resp.content
 
-    def upload(self, filename: str, content: bytes) -> None:
+    def upload(self, filename: str, content: bytes, content_type: str | None = None) -> None:
         resp = httpx.put(
             f"{BLOB_API_BASE}/",
             params={"pathname": filename},
             content=content,
             headers=self._auth_headers(**{
-                "x-content-type": XLSX_CONTENT_TYPE,
+                "x-content-type": content_type or XLSX_CONTENT_TYPE,
                 "x-add-random-suffix": "0",
                 "x-allow-overwrite": "1",
                 "x-vercel-blob-access": "private",

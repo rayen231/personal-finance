@@ -119,5 +119,5 @@ class WorkbookRepository:
 def get_workbook_repository() -> WorkbookRepository:
     settings = get_settings()
     storage = get_storage_service(settings)
-    sync_state = SyncStateStore(settings.local_data_dir / ".sync_state")
+    sync_state = SyncStateStore(storage)
     return WorkbookRepository(storage, settings, sync_state)
