@@ -3,6 +3,7 @@ from fastapi import Depends, Header, HTTPException, status
 from app.config import Settings, get_settings
 from app.services.finance_service import FinanceService
 from app.services.planning_service import PlanningService
+from app.services.setup_api_service import SetupApiService
 from app.services.storage_service import get_storage_service
 from app.services.sync_state import SyncStateStore
 from app.services.workbook_repository import WorkbookRepository
@@ -28,3 +29,7 @@ def get_finance_service(repo: WorkbookRepository = Depends(get_repo)) -> Finance
 
 def get_planning_service(repo: WorkbookRepository = Depends(get_repo)) -> PlanningService:
     return PlanningService(repo)
+
+
+def get_setup_service(repo: WorkbookRepository = Depends(get_repo)) -> SetupApiService:
+    return SetupApiService(repo)

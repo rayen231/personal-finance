@@ -7,9 +7,27 @@ from dataclasses import dataclass, field
 from openpyxl.utils.cell import range_boundaries
 from openpyxl.workbook.workbook import Workbook
 
-from app.services.excel_service import WorkbookError
+from app.services.excel_service import LabelNotFoundError, TableFullError, WorkbookError
 
 VALID_TX_TYPES = ["Expense", "Free Money", "Investment"]
+
+# Mirrors the IF() formula in tbl_Recurring's "Monthly Reserve" column, so
+# the API can return a real number instead of an unevaluated formula string
+# (openpyxl never computes formulas).
+_FREQUENCY_DIVISORS = {
+    "Monthly": 1,
+    "Yearly": 12,
+    "Every 6 months": 6,
+    "Every 3 months": 3,
+}
+
+
+def _monthly_reserve(frequency: str, expected_amount: float) -> float:
+    if not expected_amount:
+        return 0.0
+    if frequency == "Weekly":
+        return expected_amount * 52 / 12
+    return expected_amount / _FREQUENCY_DIVISORS.get(frequency, 1)
 
 
 def _table_single_column(ws, table_name: str) -> list[str]:
@@ -75,4 +93,55 @@ def read_setup_config(wb: Workbook) -> SetupConfig:
         free_money_categories=_table_single_column(ws, "tbl_FreeMoneyCategories"),
         investment_areas=_table_single_column(ws, "tbl_InvestmentAreas"),
         classifications=_table_single_column(ws, "tbl_Classifications"),
+    )
+
+
+def read_recurring_expenses(wb: Workbook) -> list[dict]:
+    ws = wb["SETUP"]
+    table_name = "tbl_Recurring"
+    if table_name not in ws.tables:
+        raise WorkbookError(f"Table {table_name} not found in SETUP")
+    min_col, min_row, max_col, max_row = range_boundaries(ws.tables[table_name].ref)
+
+    results = []
+    for row in range(min_row + 1, max_row + 1):
+        expense = ws.cell(row=row, column=min_col).value
+        if expense is None:
+            continue
+        category = ws.cell(row=row, column=min_col + 1).value
+        frequency = ws.cell(row=row, column=min_col + 2).value
+        expected_amount = ws.cell(row=row, column=min_col + 3).value or 0
+        notes = ws.cell(row=row, column=min_col + 5).value
+        results.append({
+            "expense": expense,
+            "category": category,
+            "frequency": frequency,
+            "expected_amount": expected_amount,
+            "monthly_reserve": _monthly_reserve(frequency, expected_amount),
+            "notes": notes,
+        })
+    return results
+
+
+def add_subcategory(wb: Workbook, category: str, subcategory: str) -> None:
+    ws = wb["SETUP"]
+    table_name = "tbl_Subcategories"
+    if table_name not in ws.tables:
+        raise WorkbookError(f"Table {table_name} not found in SETUP")
+
+    config = read_setup_config(wb)
+    if category not in config.expense_categories:
+        raise LabelNotFoundError(f"'{category}' is not a known expense category.")
+    if subcategory in config.subcategories_for(category):
+        return  # already exists - adding is idempotent
+
+    min_col, min_row, max_col, max_row = range_boundaries(ws.tables[table_name].ref)
+    for row in range(min_row + 1, max_row + 1):
+        if ws.cell(row=row, column=min_col).value is None:
+            ws.cell(row=row, column=min_col, value=category)
+            ws.cell(row=row, column=min_col + 1, value=subcategory)
+            return
+
+    raise TableFullError(
+        f"{table_name} is full (no blank row up to row {max_row}). Add rows to the table in Excel first."
     )
