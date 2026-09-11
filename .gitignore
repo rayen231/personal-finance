@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+data/.sync_state/
+*.tmp
+
+# Real personal financial data - never goes to a (public) repo.
+*.xlsx
+data/
