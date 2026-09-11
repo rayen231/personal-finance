@@ -183,3 +183,121 @@ def set_month_status(ws: Worksheet, status: str) -> None:
 def ensure_month_active(ws: Worksheet) -> None:
     if get_month_status(ws) == "Not Started":
         set_month_status(ws, "Active")
+
+
+class LabelNotFoundError(WorkbookError):
+    pass
+
+
+# --- Fixed-row planning blocks -------------------------------------------
+# These are plain formula grids (not Excel Tables), sized to match SETUP's
+# list at the time the workbook was built. Labels are matched by text, not
+# by fixed row index, so re-ordering the block in Excel doesn't break the
+# API - but the row RANGE itself is fixed, so a block that's already at
+# capacity raises PlanningBlockFullError rather than overwriting a
+# neighboring section.
+
+INCOME_ROWS = range(6, 10)  # A=source, B=expected, C=actual
+INCOME_LABEL_COL, INCOME_EXPECTED_COL, INCOME_ACTUAL_COL = 1, 2, 3
+
+NECESSARY_EXPENSE_ROWS = range(14, 21)  # A=category, B=planned
+NEC_EXP_LABEL_COL, NEC_EXP_PLANNED_COL = 1, 2
+
+FREE_MONEY_ROWS = range(22, 27)  # F=category, G=planned
+FREE_MONEY_LABEL_COL, FREE_MONEY_PLANNED_COL = 6, 7
+
+INVESTMENT_PLAN_ROWS = range(25, 35)  # A=Date, B=Area, C=Subcategory, D=Amount, E=Notes
+INVESTMENT_PLAN_AMOUNT_COL = 4
+
+MINIMUM_SAVINGS_CELL = "G6"
+
+
+def _numeric_or_none(value) -> Optional[float]:
+    """Planned-value cells are normally numbers; a couple of them hold a
+    stray formula in the source workbook (a pre-existing bug flagged
+    separately). Treat unreadable/formula values as "not set" rather than
+    guessing at their result, since openpyxl never evaluates formulas."""
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
+def _find_label_row(ws: Worksheet, rows: range, label_col: int, label: str) -> int:
+    for row in rows:
+        if ws.cell(row=row, column=label_col).value == label:
+            return row
+    raise LabelNotFoundError(
+        f"'{label}' not found in row range {rows.start}-{rows.stop - 1}. "
+        "Add it as a labeled row in Excel first."
+    )
+
+
+def read_income(ws: Worksheet) -> list[dict]:
+    results = []
+    for row in INCOME_ROWS:
+        source = ws.cell(row=row, column=INCOME_LABEL_COL).value
+        if source is None:
+            continue
+        results.append({
+            "source": source,
+            "expected": _numeric_or_none(ws.cell(row=row, column=INCOME_EXPECTED_COL).value) or 0,
+            "actual": _numeric_or_none(ws.cell(row=row, column=INCOME_ACTUAL_COL).value) or 0,
+        })
+    return results
+
+
+def write_income(ws: Worksheet, source: str, *, expected: Optional[float] = None, actual: Optional[float] = None) -> None:
+    row = _find_label_row(ws, INCOME_ROWS, INCOME_LABEL_COL, source)
+    if expected is not None:
+        ws.cell(row=row, column=INCOME_EXPECTED_COL, value=expected)
+    if actual is not None:
+        ws.cell(row=row, column=INCOME_ACTUAL_COL, value=actual)
+
+
+def read_necessary_expense_planned(ws: Worksheet) -> dict[str, float]:
+    result = {}
+    for row in NECESSARY_EXPENSE_ROWS:
+        category = ws.cell(row=row, column=NEC_EXP_LABEL_COL).value
+        if category is None:
+            continue
+        result[category] = _numeric_or_none(ws.cell(row=row, column=NEC_EXP_PLANNED_COL).value) or 0
+    return result
+
+
+def write_necessary_expense_planned(ws: Worksheet, category: str, amount: float) -> None:
+    row = _find_label_row(ws, NECESSARY_EXPENSE_ROWS, NEC_EXP_LABEL_COL, category)
+    ws.cell(row=row, column=NEC_EXP_PLANNED_COL, value=amount)
+
+
+def read_free_money_planned(ws: Worksheet) -> dict[str, float]:
+    result = {}
+    for row in FREE_MONEY_ROWS:
+        category = ws.cell(row=row, column=FREE_MONEY_LABEL_COL).value
+        if category is None:
+            continue
+        result[category] = _numeric_or_none(ws.cell(row=row, column=FREE_MONEY_PLANNED_COL).value) or 0
+    return result
+
+
+def write_free_money_planned(ws: Worksheet, category: str, amount: float) -> None:
+    row = _find_label_row(ws, FREE_MONEY_ROWS, FREE_MONEY_LABEL_COL, category)
+    ws.cell(row=row, column=FREE_MONEY_PLANNED_COL, value=amount)
+
+
+def read_planned_investments_total(ws: Worksheet) -> float:
+    """Sums the Amount column of the (read-only, manually-filled)
+    Investments planning block. Deliberately does NOT read the workbook's
+    own G8 "Planned Investments" formula, which sums the wrong column
+    (a pre-existing bug, flagged separately) - this recomputes it correctly."""
+    total = 0.0
+    for row in INVESTMENT_PLAN_ROWS:
+        total += _numeric_or_none(ws.cell(row=row, column=INVESTMENT_PLAN_AMOUNT_COL).value) or 0
+    return total
+
+
+def read_minimum_savings(ws: Worksheet) -> float:
+    return _numeric_or_none(ws[MINIMUM_SAVINGS_CELL].value) or 0
+
+
+def write_minimum_savings(ws: Worksheet, amount: float) -> None:
+    ws[MINIMUM_SAVINGS_CELL] = amount

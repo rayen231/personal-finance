@@ -9,6 +9,7 @@ from app.main import app
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SOURCE_WORKBOOK = REPO_ROOT / "data" / "Personal_Finance_2026_V1.xlsx"
+SOURCE_TEMPLATE = REPO_ROOT / "data" / "Personal_Finance_TEMPLATE.xlsx"
 API_KEY = "test-key"
 
 
@@ -17,7 +18,7 @@ def data_dir(tmp_path: Path) -> Path:
     d = tmp_path / "data"
     d.mkdir()
     shutil.copy(SOURCE_WORKBOOK, d / "Personal_Finance_2026_V1.xlsx")
-    shutil.copy(SOURCE_WORKBOOK, d / "Personal_Finance_TEMPLATE.xlsx")
+    shutil.copy(SOURCE_TEMPLATE, d / "Personal_Finance_TEMPLATE.xlsx")
     return d
 
 
