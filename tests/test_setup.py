@@ -13,6 +13,23 @@ def test_get_setup_full(client: TestClient):
     assert len(body["recurring_expenses"]) == 6
 
 
+def test_subcategories_excludes_overlapping_table_rows(client: TestClient):
+    # The real workbook has tbl_Subcategories declared as E4:F29, but rows
+    # 15-19 genuinely belong to tbl_Classifications (E15:E19) and rows 24-29
+    # to tbl_Recurring (A24:F30) - not blank/unused Subcategories rows. This
+    # asserts the API never leaks that overlapping content as fake
+    # (category, subcategory) pairs, and that real Classification values
+    # aren't lost either.
+    body = client.get("/api/v1/setup/2026").json()
+    categories_seen = {pair["category"] for pair in body["subcategories"]}
+    assert "Classification" not in categories_seen
+    assert not any("Necessary" in c or "Unnecessary" in c for c in categories_seen)
+    assert set(body["classifications"]) == {
+        "Necessary — Planned", "Necessary — Unplanned",
+        "Unnecessary — Planned", "Unnecessary — Unplanned",
+    }
+
+
 def test_recurring_expense_monthly_reserve_computed(client: TestClient):
     resp = client.get("/api/v1/setup/2026/recurring-expenses")
     assert resp.status_code == 200
@@ -47,8 +64,13 @@ def test_add_subcategory_succeeds_with_spare_row(client: TestClient, data_dir):
     path = data_dir / "Personal_Finance_2026_V1.xlsx"
     wb = openpyxl.load_workbook(path)
     ws = wb["SETUP"]
-    ws["E29"] = None  # free up the last row of tbl_Subcategories
-    ws["F29"] = None
+    # Row 29 is actually inside tbl_Recurring's real range (a pre-existing
+    # overlap with tbl_Subcategories' overly-large declared ref - see
+    # setup_service._rows_claimed_by_other_tables), so it no longer counts
+    # as an available Subcategories row. Row 14 is a genuinely free,
+    # non-excluded row once its stray label is cleared.
+    ws["E14"] = None
+    ws["F14"] = None
     wb.save(path)
 
     resp = client.post(

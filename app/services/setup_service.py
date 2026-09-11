@@ -42,12 +42,33 @@ def _table_single_column(ws, table_name: str) -> list[str]:
     return values
 
 
+def _rows_claimed_by_other_tables(ws, own_table_name: str, min_col: int, max_col: int) -> set[int]:
+    """SETUP has at least one known case (tbl_Subcategories vs tbl_Classifications
+    and tbl_Recurring) where a table's declared ref genuinely overlaps another
+    table's real range in the source workbook - not a blank/unused area. Reading
+    or writing those rows would silently corrupt whichever table actually owns
+    them, so every row/col range is checked against all *other* tables on the
+    sheet and excluded if it overlaps, rather than trusting one table's own ref."""
+    excluded: set[int] = set()
+    for name in ws.tables:
+        if name == own_table_name:
+            continue
+        o_min_col, o_min_row, o_max_col, o_max_row = range_boundaries(ws.tables[name].ref)
+        if o_max_col < min_col or o_min_col > max_col:
+            continue  # no column overlap
+        excluded.update(range(o_min_row, o_max_row + 1))
+    return excluded
+
+
 def _table_two_columns(ws, table_name: str) -> list[tuple[str, str]]:
     if table_name not in ws.tables:
         raise WorkbookError(f"Table {table_name} not found in SETUP")
     min_col, min_row, max_col, max_row = range_boundaries(ws.tables[table_name].ref)
+    excluded_rows = _rows_claimed_by_other_tables(ws, table_name, min_col, max_col)
     pairs = []
     for row in range(min_row + 1, max_row + 1):
+        if row in excluded_rows:
+            continue
         a = ws.cell(row=row, column=min_col).value
         b = ws.cell(row=row, column=min_col + 1).value
         if a is not None and b is not None:
@@ -86,10 +107,18 @@ class SetupConfig:
 
 def read_setup_config(wb: Workbook) -> SetupConfig:
     ws = wb["SETUP"]
+    expense_categories = _table_single_column(ws, "tbl_ExpenseCategories")
+    raw_subcategories = _table_two_columns(ws, "tbl_Subcategories")
+    # Belt-and-suspenders beyond the overlap check above: a row can hold a
+    # stray label in the category cell without being claimed by any other
+    # table (e.g. a section title sitting one row above a table it isn't
+    # part of). Rather than guess what such a row "should" say, drop any
+    # pair whose category isn't a real, known expense category.
+    subcategories = [(c, s) for c, s in raw_subcategories if c in expense_categories]
     return SetupConfig(
         income_sources=_table_single_column(ws, "tbl_IncomeSources"),
-        expense_categories=_table_single_column(ws, "tbl_ExpenseCategories"),
-        subcategories=_table_two_columns(ws, "tbl_Subcategories"),
+        expense_categories=expense_categories,
+        subcategories=subcategories,
         free_money_categories=_table_single_column(ws, "tbl_FreeMoneyCategories"),
         investment_areas=_table_single_column(ws, "tbl_InvestmentAreas"),
         classifications=_table_single_column(ws, "tbl_Classifications"),
@@ -139,7 +168,10 @@ def add_subcategory(wb: Workbook, category: str, subcategory: str) -> bool:
         return False  # already exists - adding is idempotent
 
     min_col, min_row, max_col, max_row = range_boundaries(ws.tables[table_name].ref)
+    excluded_rows = _rows_claimed_by_other_tables(ws, table_name, min_col, max_col)
     for row in range(min_row + 1, max_row + 1):
+        if row in excluded_rows:
+            continue
         if ws.cell(row=row, column=min_col).value is None:
             ws.cell(row=row, column=min_col, value=category)
             ws.cell(row=row, column=min_col + 1, value=subcategory)
