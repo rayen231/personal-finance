@@ -8,3 +8,16 @@ data/.sync_state/
 # Real personal financial data - never goes to a (public) repo.
 *.xlsx
 data/
+
+# Flutter / Dart (mobile_app/)
+mobile_app/.dart_tool/
+mobile_app/.idea/
+mobile_app/build/
+mobile_app/.flutter-plugins-dependencies
+mobile_app/.pub-cache/
+mobile_app/.pub/
+mobile_app/**/*.iml
+mobile_app/android/app/debug
+mobile_app/android/app/profile
+mobile_app/android/app/release
+mobile_app/android/local.properties
