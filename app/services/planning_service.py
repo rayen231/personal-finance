@@ -37,10 +37,14 @@ class PlanningService:
 
     def update_income(self, year: int, month: int, source: str, payload: IncomeUpdate) -> IncomeSourceOut:
         month_name = excel_service.month_name(month)
-        with self.repo.open_for_write(year) as wb:
-            ws = wb[month_name]
+        with self.repo.open_for_write(year) as handle:
+            ws = handle.wb[month_name]
+            # Still validates `source` exists even if there's nothing to write.
             excel_service.write_income(ws, source, expected=payload.expected, actual=payload.actual)
-            excel_service.ensure_month_active(ws)
+            if payload.expected is None and payload.actual is None:
+                handle.changed = False
+            else:
+                excel_service.ensure_month_active(ws)
 
         updated = next(r for r in self.list_income(year, month) if r.source == source)
         return updated
@@ -56,15 +60,21 @@ class PlanningService:
 
     def update_plan(self, year: int, month: int, payload: PlanUpdate) -> PlanOut:
         month_name = excel_service.month_name(month)
-        with self.repo.open_for_write(year) as wb:
-            ws = wb[month_name]
+        with self.repo.open_for_write(year) as handle:
+            ws = handle.wb[month_name]
+            changed = False
             if payload.minimum_savings is not None:
                 excel_service.write_minimum_savings(ws, payload.minimum_savings)
+                changed = True
             for category, amount in (payload.necessary_expenses_planned or {}).items():
                 excel_service.write_necessary_expense_planned(ws, category, amount)
+                changed = True
             for category, amount in (payload.free_money_planned or {}).items():
                 excel_service.write_free_money_planned(ws, category, amount)
-            excel_service.ensure_month_active(ws)
+                changed = True
+            handle.changed = changed
+            if changed:
+                excel_service.ensure_month_active(ws)
 
         return self.get_plan(year, month)
 

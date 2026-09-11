@@ -24,6 +24,6 @@ class SetupApiService:
         )
 
     def add_subcategory(self, year: int, category: str, subcategory: str) -> SubcategoryOut:
-        with self.repo.open_for_write(year) as wb:
-            setup_service.add_subcategory(wb, category, subcategory)
+        with self.repo.open_for_write(year) as handle:
+            handle.changed = setup_service.add_subcategory(handle.wb, category, subcategory)
         return SubcategoryOut(category=category, subcategory=subcategory)

@@ -25,6 +25,18 @@ def _lock_for(year: int) -> Lock:
     return _year_locks.setdefault(year, Lock())
 
 
+class WriteHandle:
+    """Wraps a Workbook opened via open_for_write. `changed` defaults to True
+    (most writers unconditionally modify something); callers that might do
+    nothing - an idempotent retry, a no-op update, a fully-failed batch -
+    should set it False so a no-op doesn't upload a new blob or bump the
+    version (which a mobile client could otherwise mistake for new data)."""
+
+    def __init__(self, wb: Workbook):
+        self.wb = wb
+        self.changed = True
+
+
 class WorkbookRepository:
     def __init__(self, storage: StorageService, settings: Settings, sync_state: SyncStateStore):
         self.storage = storage
@@ -77,13 +89,17 @@ class WorkbookRepository:
 
     @contextmanager
     def open_for_write(self, year: int):
-        """Yields a loaded Workbook; saves + uploads it on clean exit."""
+        """Yields a WriteHandle wrapping a loaded Workbook; saves + uploads
+        it and bumps server_version on clean exit, unless the caller cleared
+        handle.changed to signal nothing actually happened."""
         with _lock_for(year):
             self._ensure_workbook_exists(year)
             content = self.storage.download(self._filename(year))
-            wb = excel_service.load_workbook(content)
-            yield wb
-            new_content = excel_service.save_workbook(wb)
+            handle = WriteHandle(excel_service.load_workbook(content))
+            yield handle
+            if not handle.changed:
+                return
+            new_content = excel_service.save_workbook(handle.wb)
             # Verify the saved bytes can be reopened before publishing them.
             excel_service.load_workbook(new_content)
             self.storage.upload(self._filename(year), new_content)

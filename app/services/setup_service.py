@@ -123,7 +123,10 @@ def read_recurring_expenses(wb: Workbook) -> list[dict]:
     return results
 
 
-def add_subcategory(wb: Workbook, category: str, subcategory: str) -> None:
+def add_subcategory(wb: Workbook, category: str, subcategory: str) -> bool:
+    """Returns True if a new row was written, False if the pair already
+    existed (idempotent no-op) - callers use this to decide whether the
+    workbook actually needs to be re-saved."""
     ws = wb["SETUP"]
     table_name = "tbl_Subcategories"
     if table_name not in ws.tables:
@@ -133,14 +136,14 @@ def add_subcategory(wb: Workbook, category: str, subcategory: str) -> None:
     if category not in config.expense_categories:
         raise LabelNotFoundError(f"'{category}' is not a known expense category.")
     if subcategory in config.subcategories_for(category):
-        return  # already exists - adding is idempotent
+        return False  # already exists - adding is idempotent
 
     min_col, min_row, max_col, max_row = range_boundaries(ws.tables[table_name].ref)
     for row in range(min_row + 1, max_row + 1):
         if ws.cell(row=row, column=min_col).value is None:
             ws.cell(row=row, column=min_col, value=category)
             ws.cell(row=row, column=min_col + 1, value=subcategory)
-            return
+            return True
 
     raise TableFullError(
         f"{table_name} is full (no blank row up to row {max_row}). Add rows to the table in Excel first."

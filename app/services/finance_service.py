@@ -5,27 +5,8 @@ import uuid
 from app.models.transaction import TransactionCreate, TransactionOut, TransactionUpdate
 from app.services import excel_service
 from app.services.setup_service import read_setup_config
+from app.services.validation import ValidationError, validate_transaction_fields
 from app.services.workbook_repository import WorkbookRepository
-
-
-class ValidationError(Exception):
-    def __init__(self, code: str, message: str):
-        self.code = code
-        self.message = message
-        super().__init__(message)
-
-
-def _validate_against_setup(setup, tx_type: str, category: str, subcategory: str) -> None:
-    if not setup.is_valid_category_for_type(tx_type, category):
-        raise ValidationError(
-            "invalid_category",
-            f"Category '{category}' is not valid for type '{tx_type}'.",
-        )
-    if not setup.is_valid_subcategory(tx_type, category, subcategory):
-        raise ValidationError(
-            "invalid_subcategory",
-            f"Subcategory '{subcategory}' does not belong to category '{category}'.",
-        )
 
 
 def _row_to_out(row: excel_service.TransactionRow) -> TransactionOut:
@@ -64,9 +45,10 @@ class FinanceService:
         month_name = excel_service.month_name(month)
         transaction_id = transaction_id or str(uuid.uuid4())
 
-        with self.repo.open_for_write(year) as wb:
+        with self.repo.open_for_write(year) as handle:
+            wb = handle.wb
             setup = read_setup_config(wb)
-            _validate_against_setup(setup, payload.type, payload.category, payload.subcategory)
+            validate_transaction_fields(setup, payload.type, payload.category, payload.subcategory)
 
             ws = wb[month_name]
             row = excel_service.find_first_blank_row(ws, month_name)
@@ -93,8 +75,8 @@ class FinanceService:
     ) -> TransactionOut:
         month_name = excel_service.month_name(month)
 
-        with self.repo.open_for_write(year) as wb:
-            ws = wb[month_name]
+        with self.repo.open_for_write(year) as handle:
+            ws = handle.wb[month_name]
             row = excel_service.find_row_by_transaction_id(ws, month_name, transaction_id)
             current = excel_service.read_row(ws, row)
 
@@ -102,8 +84,8 @@ class FinanceService:
             new_category = payload.category or current.category
             new_subcategory = payload.subcategory or current.subcategory
 
-            setup = read_setup_config(wb)
-            _validate_against_setup(setup, new_type, new_category, new_subcategory)
+            setup = read_setup_config(handle.wb)
+            validate_transaction_fields(setup, new_type, new_category, new_subcategory)
 
             excel_service.write_transaction_row(
                 ws,
@@ -126,8 +108,8 @@ class FinanceService:
 
     def delete_transaction(self, year: int, month: int, transaction_id: str) -> None:
         month_name = excel_service.month_name(month)
-        with self.repo.open_for_write(year) as wb:
-            ws = wb[month_name]
+        with self.repo.open_for_write(year) as handle:
+            ws = handle.wb[month_name]
             row = excel_service.find_row_by_transaction_id(ws, month_name, transaction_id)
             excel_service.clear_transaction_row(ws, row)
 
