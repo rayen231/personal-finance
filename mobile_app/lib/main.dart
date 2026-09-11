@@ -1,16 +1,20 @@
 import 'package:flutter/material.dart';
 
+import 'screens/home_screen.dart';
+
 void main() {
-  runApp(const MainApp());
+  runApp(const MoneyHandlerApp());
 }
 
-class MainApp extends StatelessWidget {
-  const MainApp({super.key});
+class MoneyHandlerApp extends StatelessWidget {
+  const MoneyHandlerApp({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return const MaterialApp(
-      home: Scaffold(body: Center(child: Text('Hello World!'))),
+    return MaterialApp(
+      title: 'Money Handler',
+      theme: ThemeData(colorSchemeSeed: Colors.teal, useMaterial3: true),
+      home: const HomeScreen(),
     );
   }
 }
