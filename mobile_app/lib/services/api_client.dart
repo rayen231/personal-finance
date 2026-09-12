@@ -77,6 +77,50 @@ class ApiClient {
     _checkOk(resp);
   }
 
+  Future<List<dynamic>> getIncome(int year, int month) async {
+    final resp = await http.get(_uri('/api/v1/months/$year/$month/income'), headers: _headers);
+    _checkOk(resp);
+    return jsonDecode(resp.body) as List<dynamic>;
+  }
+
+  Future<void> updateIncome(int year, int month, String source,
+      {double? expected, double? actual}) async {
+    final resp = await http.put(
+      _uri('/api/v1/months/$year/$month/income/$source'),
+      headers: _headers,
+      body: jsonEncode({
+        'expected': ?expected,
+        'actual': ?actual,
+      }),
+    );
+    _checkOk(resp);
+  }
+
+  Future<Map<String, dynamic>> getPlan(int year, int month) async {
+    final resp = await http.get(_uri('/api/v1/plan/$year/$month'), headers: _headers);
+    _checkOk(resp);
+    return jsonDecode(resp.body) as Map<String, dynamic>;
+  }
+
+  Future<void> updatePlan(
+    int year,
+    int month, {
+    double? minimumSavings,
+    Map<String, double>? necessaryExpensesPlanned,
+    Map<String, double>? freeMoneyPlanned,
+  }) async {
+    final resp = await http.put(
+      _uri('/api/v1/plan/$year/$month'),
+      headers: _headers,
+      body: jsonEncode({
+        'minimum_savings': ?minimumSavings,
+        'necessary_expenses_planned': ?necessaryExpensesPlanned,
+        'free_money_planned': ?freeMoneyPlanned,
+      }),
+    );
+    _checkOk(resp);
+  }
+
   Future<SyncResult> sync(List<LocalTransaction> pending, {String clientId = 'flutter-app'}) async {
     final body = jsonEncode({
       'client_id': clientId,

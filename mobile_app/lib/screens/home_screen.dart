@@ -7,8 +7,11 @@ import '../services/api_client.dart';
 import '../services/sync_service.dart';
 import 'add_transaction_screen.dart';
 import 'dashboard_screen.dart';
+import 'income_screen.dart';
+import 'plan_screen.dart';
 import 'settings_screen.dart';
 import 'transactions_screen.dart';
+import 'yearly_overview_screen.dart';
 
 /// Top-level shell: bottom nav between Dashboard and Transactions, with
 /// Sync Now / Settings in the app bar and an Add Transaction FAB.
@@ -70,6 +73,12 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  void _openScreen(Widget Function(AppConfig) builder) {
+    if (_config == null) return;
+    Navigator.of(context).pop(); // close the drawer
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => builder(_config!)));
+  }
+
   Future<void> _openAddTransaction() async {
     if (_config == null) return;
     final added = await Navigator.of(context).push<bool>(
@@ -126,6 +135,43 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           IconButton(icon: const Icon(Icons.settings), onPressed: _openSettings),
         ],
+      ),
+      drawer: Drawer(
+        child: ListView(
+          padding: EdgeInsets.zero,
+          children: [
+            const DrawerHeader(
+              child: Align(
+                alignment: Alignment.bottomLeft,
+                child: Text('Money Handler', style: TextStyle(fontSize: 22)),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.account_balance_wallet),
+              title: const Text('Income'),
+              onTap: () => _openScreen((c) => IncomeScreen(config: c)),
+            ),
+            ListTile(
+              leading: const Icon(Icons.rule),
+              title: const Text('Monthly Plan'),
+              onTap: () => _openScreen((c) => PlanScreen(config: c)),
+            ),
+            ListTile(
+              leading: const Icon(Icons.calendar_view_month),
+              title: const Text('Yearly Overview'),
+              onTap: () => _openScreen((c) => YearlyOverviewScreen(config: c)),
+            ),
+            const Divider(),
+            ListTile(
+              leading: const Icon(Icons.settings),
+              title: const Text('Settings'),
+              onTap: () {
+                Navigator.of(context).pop();
+                _openSettings();
+              },
+            ),
+          ],
+        ),
       ),
       body: IndexedStack(
         index: _tabIndex,
