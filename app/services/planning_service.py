@@ -31,20 +31,24 @@ class PlanningService:
     def _previous_month(self, year: int, month: int) -> tuple[int, int]:
         return (year - 1, 12) if month == 1 else (year, month - 1)
 
-    def _carry_forward(self, year: int, month: int, extractor) -> float:
-        """Walks backward from (year, month) - excluding it - until it finds
-        a month that was actually touched ("Active"/etc., not "Not Started"),
-        and returns `extractor(ws)` from that month. Stops (returns 0) if it
-        runs off the start of recorded history or hits the lookback cap,
-        without ever creating a workbook for a year that doesn't exist yet."""
+    def _carry_forward(self, year: int, month: int, raw_extractor) -> float:
+        """Walks backward from (year, month) - excluding it - until
+        `raw_extractor(ws)` returns something other than None (i.e. a month
+        where *this specific field* was actually entered, not just a month
+        that happens to be "Active" for some unrelated reason - a different
+        field being touched must never make this stop early and report a
+        false 0). Stops (returns 0) if it runs off the start of recorded
+        history or hits the lookback cap, without ever creating a workbook
+        for a year that doesn't exist yet."""
         y, m = year, month
         for _ in range(_MAX_CARRY_FORWARD_LOOKBACK):
             y, m = self._previous_month(y, m)
             if not self.repo.workbook_exists(y):
                 return 0.0
             ws = self.repo.open_for_read(y)[excel_service.month_name(m)]
-            if excel_service.get_month_status(ws) != "Not Started":
-                return extractor(ws)
+            value = raw_extractor(ws)
+            if value is not None:
+                return value
         return 0.0
 
     def list_income(self, year: int, month: int) -> list[IncomeSourceOut]:
@@ -54,21 +58,23 @@ class PlanningService:
         results = []
         for r in rows:
             expected = r["expected"]
-            # A blank/zero "expected" on a recurring source means the month
-            # hasn't been given its own figure yet - carry the last actually
+            raw_expected = excel_service.read_income_expected_raw(ws, r["source"])
+            # A blank "expected" on a recurring source means it hasn't been
+            # given its own figure this month yet - carry the last actually
             # entered one forward rather than showing 0. Changing a month's
             # own value only ever affects months *after* it, since this only
             # ever looks backward from the current month.
-            if expected == 0 and r["source"] in recurring_sources:
+            if raw_expected is None and r["source"] in recurring_sources:
                 expected = self._carry_forward(
-                    year, month, lambda ws, s=r["source"]: excel_service.read_income_expected(ws, s)
+                    year, month, lambda ws, s=r["source"]: excel_service.read_income_expected_raw(ws, s)
                 )
+            actual = r["actual"]  # None until the user actually logs it - never carried forward.
             results.append(
                 IncomeSourceOut(
                     source=r["source"],
                     expected=expected,
-                    actual=r["actual"],
-                    difference=r["actual"] - expected,
+                    actual=actual,
+                    difference=None if actual is None else actual - expected,
                 )
             )
         return results
@@ -91,10 +97,11 @@ class PlanningService:
         ws = self.repo.open_for_read(year)[excel_service.month_name(month)]
         free_money_planned = excel_service.read_free_money_planned(ws)
         recurring_categories = self.recurring_flags.get(year)["free_money_categories"]
-        for category, amount in free_money_planned.items():
-            if amount == 0 and category in recurring_categories:
+        for category in free_money_planned:
+            raw = excel_service.read_free_money_planned_raw(ws, category)
+            if raw is None and category in recurring_categories:
                 free_money_planned[category] = self._carry_forward(
-                    year, month, lambda ws, c=category: excel_service.read_free_money_planned(ws).get(c, 0.0)
+                    year, month, lambda ws, c=category: excel_service.read_free_money_planned_raw(ws, c)
                 )
         return PlanOut(
             minimum_savings=excel_service.read_minimum_savings(ws),
@@ -129,7 +136,7 @@ class PlanningService:
 
         income_rows = excel_service.read_income(ws)
         expected_income = sum(r["expected"] for r in income_rows)
-        actual_income = sum(r["actual"] for r in income_rows)
+        actual_income = sum((r["actual"] or 0) for r in income_rows)
 
         transactions = excel_service.list_transactions(ws, month_name)
         necessary_actual = sum(t.amount for t in transactions if t.type == "Expense")

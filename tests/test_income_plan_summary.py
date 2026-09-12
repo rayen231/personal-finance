@@ -7,7 +7,8 @@ def test_list_income_defaults(client: TestClient):
     sources = {r["source"]: r for r in resp.json()}
     assert set(sources) == {"Roundesk", "GoMyCode", "Freelance", "Family Support"}
     assert sources["Roundesk"]["expected"] == 0
-    assert sources["Roundesk"]["difference"] == 0
+    assert sources["Roundesk"]["actual"] is None
+    assert sources["Roundesk"]["difference"] is None
 
 
 def test_update_income_source(client: TestClient):
@@ -22,7 +23,7 @@ def test_update_income_source(client: TestClient):
 
     listed = {r["source"]: r for r in client.get("/api/v1/months/2026/9/income").json()}
     assert listed["Roundesk"]["actual"] == 1550
-    assert listed["GoMyCode"]["actual"] == 0  # untouched
+    assert listed["GoMyCode"]["actual"] is None  # untouched - not yet received/entered
 
 
 def test_update_unknown_income_source_rejected(client: TestClient):

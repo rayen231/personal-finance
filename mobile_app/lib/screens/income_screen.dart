@@ -66,8 +66,12 @@ class _IncomeScreenState extends State<IncomeScreen> {
   Future<void> _editSource(Map<String, dynamic> source) async {
     final expectedController =
         TextEditingController(text: (source['expected'] as num).toStringAsFixed(2));
+    // Left blank (rather than pre-filled "0.00") when nothing's been
+    // received/entered yet, so the user can tell "not yet filled" apart
+    // from a genuine zero, and doesn't have to type over a misleading 0.
+    final currentActual = source['actual'] as num?;
     final actualController =
-        TextEditingController(text: (source['actual'] as num).toStringAsFixed(2));
+        TextEditingController(text: currentActual == null ? '' : currentActual.toStringAsFixed(2));
 
     final saved = await showDialog<bool>(
       context: context,
@@ -84,7 +88,10 @@ class _IncomeScreenState extends State<IncomeScreen> {
             const SizedBox(height: 12),
             TextField(
               controller: actualController,
-              decoration: const InputDecoration(labelText: 'Actual (DT)'),
+              decoration: const InputDecoration(
+                labelText: 'Actual (DT)',
+                hintText: 'Leave blank if not received yet',
+              ),
               keyboardType: const TextInputType.numberWithOptions(decimal: true),
             ),
           ],
@@ -99,7 +106,9 @@ class _IncomeScreenState extends State<IncomeScreen> {
     if (saved != true) return;
 
     final expected = double.tryParse(expectedController.text) ?? (source['expected'] as num).toDouble();
-    final actual = double.tryParse(actualController.text) ?? (source['actual'] as num).toDouble();
+    // An empty field means "not received yet" and is sent as null (the
+    // server leaves that cell blank) rather than defaulting to 0.
+    final actual = actualController.text.trim().isEmpty ? null : double.tryParse(actualController.text);
     final sourceName = source['source'] as String;
 
     // Queued, not sent immediately - this screen only talks to the API via
@@ -120,7 +129,7 @@ class _IncomeScreenState extends State<IncomeScreen> {
           'source': sourceName,
           'expected': expected,
           'actual': actual,
-          'difference': actual - expected,
+          'difference': actual == null ? null : actual - expected,
         };
         await DbService.setCache(DataRefreshService.incomeKey(_year, _month), list);
       }
@@ -177,18 +186,26 @@ class _IncomeScreenState extends State<IncomeScreen> {
                                       crossAxisAlignment: CrossAxisAlignment.end,
                                       children: [
                                         Text(
-                                          '${(s['actual'] as num).toStringAsFixed(2)} DT',
-                                          style: const TextStyle(fontWeight: FontWeight.bold),
-                                        ),
-                                        Text(
-                                          '${(s['difference'] as num) >= 0 ? '+' : ''}${(s['difference'] as num).toStringAsFixed(2)}',
+                                          s['actual'] == null
+                                              ? 'Not received yet'
+                                              : '${(s['actual'] as num).toStringAsFixed(2)} DT',
                                           style: TextStyle(
-                                            fontSize: 12,
-                                            color: (s['difference'] as num) >= 0
-                                                ? Colors.green
-                                                : Colors.red,
+                                            fontWeight: FontWeight.bold,
+                                            color: s['actual'] == null
+                                                ? Theme.of(context).textTheme.bodySmall?.color
+                                                : null,
                                           ),
                                         ),
+                                        if (s['difference'] != null)
+                                          Text(
+                                            '${(s['difference'] as num) >= 0 ? '+' : ''}${(s['difference'] as num).toStringAsFixed(2)}',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: (s['difference'] as num) >= 0
+                                                  ? Colors.green
+                                                  : Colors.red,
+                                            ),
+                                          ),
                                       ],
                                     ),
                                     onTap: () => _editSource(s),

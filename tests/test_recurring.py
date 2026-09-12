@@ -28,14 +28,20 @@ def test_income_expected_carries_forward_for_recurring_source(client: TestClient
     # forward, while a non-recurring source (GoMyCode) stays at 0.
     october = {r["source"]: r for r in client.get("/api/v1/months/2026/10/income").json()}
     assert october["Roundesk"]["expected"] == 500
-    assert october["Roundesk"]["actual"] == 0  # actual never carries, only expected
+    assert october["Roundesk"]["actual"] is None  # actual never carries, only expected
     assert october["GoMyCode"]["expected"] == 0
 
-    # Editing October's actual (receiving the money) shouldn't touch September.
+    # Editing October's actual (receiving the money) shouldn't touch September,
+    # and shouldn't corrupt carry-forward for later months either (a month
+    # touched only via "actual" must not be mistaken for one with a real
+    # "expected" of its own).
     client.put("/api/v1/months/2026/10/income/Roundesk", json={"actual": 500})
     september = {r["source"]: r for r in client.get("/api/v1/months/2026/9/income").json()}
     assert september["Roundesk"]["expected"] == 500
-    assert september["Roundesk"]["actual"] == 0
+    assert september["Roundesk"]["actual"] is None
+
+    november = {r["source"]: r for r in client.get("/api/v1/months/2026/11/income").json()}
+    assert november["Roundesk"]["expected"] == 500  # still carried from September, not October's blank
 
 
 def test_income_carry_forward_uses_nearest_month_not_just_previous(client: TestClient):

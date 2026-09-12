@@ -6,8 +6,11 @@ from pydantic import BaseModel, Field
 class IncomeSourceOut(BaseModel):
     source: str
     expected: float
-    actual: float
-    difference: float
+    # None means "not yet received/entered this month" - distinct from a
+    # genuine 0, so the app can avoid showing a misleading negative
+    # difference before the user has actually logged anything.
+    actual: Optional[float]
+    difference: Optional[float]
 
 
 class IncomeUpdate(BaseModel):

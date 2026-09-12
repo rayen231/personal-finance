@@ -241,21 +241,26 @@ def read_income(ws: Worksheet) -> list[dict]:
         results.append({
             "source": source,
             "expected": _numeric_or_none(ws.cell(row=row, column=INCOME_EXPECTED_COL).value) or 0,
-            "actual": _numeric_or_none(ws.cell(row=row, column=INCOME_ACTUAL_COL).value) or 0,
+            # Not coerced to 0: blank means "not yet received/entered this
+            # month" for callers that need to tell the two apart.
+            "actual": _numeric_or_none(ws.cell(row=row, column=INCOME_ACTUAL_COL).value),
         })
     return results
 
 
-def read_income_expected(ws: Worksheet, source: str) -> float:
-    """Single-source lookup used by recurring-value carry-forward - returns
-    0 rather than raising if this month's sheet doesn't have that source as
-    a row (e.g. it was added to SETUP after this month's template was laid
+def read_income_expected_raw(ws: Worksheet, source: str) -> Optional[float]:
+    """Single-source lookup used by recurring-value carry-forward. Returns
+    None - not 0 - when the cell is genuinely blank (never entered), so a
+    month that was touched for some *other* reason (e.g. only "actual" was
+    filled in) doesn't get mistaken for one where "expected" was actually
+    set. Also None if this month's sheet doesn't have that source as a row
+    at all (e.g. it was added to SETUP after this month's template was laid
     down)."""
     try:
         row = _find_label_row(ws, INCOME_ROWS, INCOME_LABEL_COL, source)
     except LabelNotFoundError:
-        return 0.0
-    return _numeric_or_none(ws.cell(row=row, column=INCOME_EXPECTED_COL).value) or 0.0
+        return None
+    return _numeric_or_none(ws.cell(row=row, column=INCOME_EXPECTED_COL).value)
 
 
 def write_income(ws: Worksheet, source: str, *, expected: Optional[float] = None, actual: Optional[float] = None) -> None:
@@ -289,6 +294,17 @@ def read_free_money_planned(ws: Worksheet) -> dict[str, float]:
             continue
         result[category] = _numeric_or_none(ws.cell(row=row, column=FREE_MONEY_PLANNED_COL).value) or 0
     return result
+
+
+def read_free_money_planned_raw(ws: Worksheet, category: str) -> Optional[float]:
+    """Single-category lookup used by recurring-value carry-forward - see
+    read_income_expected_raw for why this returns None (never entered)
+    rather than 0 for a blank cell."""
+    try:
+        row = _find_label_row(ws, FREE_MONEY_ROWS, FREE_MONEY_LABEL_COL, category)
+    except LabelNotFoundError:
+        return None
+    return _numeric_or_none(ws.cell(row=row, column=FREE_MONEY_PLANNED_COL).value)
 
 
 def write_free_money_planned(ws: Worksheet, category: str, amount: float) -> None:
