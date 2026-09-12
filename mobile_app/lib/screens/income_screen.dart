@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 
 import '../config/app_config.dart';
 import '../services/api_client.dart';
+import '../services/data_refresh_service.dart';
+import '../services/db_service.dart';
+import '../widgets/month_selector.dart';
 
 class IncomeScreen extends StatefulWidget {
   final AppConfig config;
@@ -12,36 +15,52 @@ class IncomeScreen extends StatefulWidget {
 }
 
 class _IncomeScreenState extends State<IncomeScreen> {
-  final _now = DateTime.now();
+  late int _year = DateTime.now().year;
+  late int _month = DateTime.now().month;
   List<Map<String, dynamic>> _sources = [];
+  DateTime? _lastUpdated;
   bool _loading = true;
-  String? _error;
+  bool _refreshing = false;
 
   ApiClient get _api => ApiClient(widget.config);
 
   @override
   void initState() {
     super.initState();
-    _load();
+    _loadFromCache();
   }
 
-  Future<void> _load() async {
+  Future<void> _loadFromCache() async {
+    setState(() => _loading = true);
+    final cached = await DbService.getCache(DataRefreshService.incomeKey(_year, _month));
+    if (!mounted) return;
     setState(() {
-      _loading = true;
-      _error = null;
+      _sources = cached == null ? [] : (cached.$1 as List).cast<Map<String, dynamic>>();
+      _lastUpdated = cached?.$2;
+      _loading = false;
     });
+  }
+
+  Future<void> _refreshFromServer() async {
+    setState(() => _refreshing = true);
     try {
-      final data = await _api.getIncome(_now.year, _now.month);
-      setState(() {
-        _sources = data.cast<Map<String, dynamic>>();
-        _loading = false;
-      });
+      final data = await _api.getIncome(_year, _month);
+      await DbService.setCache(DataRefreshService.incomeKey(_year, _month), data);
     } catch (e) {
-      setState(() {
-        _error = '$e';
-        _loading = false;
-      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Refresh failed: $e')));
+      }
     }
+    await _loadFromCache();
+    if (mounted) setState(() => _refreshing = false);
+  }
+
+  void _onMonthChanged((int, int) ym) {
+    setState(() {
+      _year = ym.$1;
+      _month = ym.$2;
+    });
+    _loadFromCache();
   }
 
   Future<void> _editSource(Map<String, dynamic> source) async {
@@ -83,13 +102,13 @@ class _IncomeScreenState extends State<IncomeScreen> {
     final actual = double.tryParse(actualController.text);
     try {
       await _api.updateIncome(
-        _now.year,
-        _now.month,
+        _year,
+        _month,
         source['source'] as String,
         expected: expected,
         actual: actual,
       );
-      await _load();
+      await _refreshFromServer();
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not save: $e')));
@@ -100,47 +119,72 @@ class _IncomeScreenState extends State<IncomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Income')),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : _error != null
-              ? Center(child: Text('Error: $_error'))
-              : RefreshIndicator(
-                  onRefresh: _load,
-                  child: ListView(
-                    padding: const EdgeInsets.all(16),
-                    children: [
-                      for (final s in _sources)
-                        Card(
-                          child: ListTile(
-                            title: Text(s['source'] as String),
-                            subtitle: Text(
-                              'Expected: ${(s['expected'] as num).toStringAsFixed(2)} DT',
-                            ),
-                            trailing: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              children: [
-                                Text(
-                                  '${(s['actual'] as num).toStringAsFixed(2)} DT',
-                                  style: const TextStyle(fontWeight: FontWeight.bold),
-                                ),
-                                Text(
-                                  '${(s['difference'] as num) >= 0 ? '+' : ''}${(s['difference'] as num).toStringAsFixed(2)}',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: (s['difference'] as num) >= 0
-                                        ? Colors.green
-                                        : Colors.red,
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: MonthSelector(year: _year, month: _month, onChanged: _onMonthChanged),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Text(
+              _lastUpdated == null
+                  ? 'Never synced - pull down to fetch'
+                  : 'Last synced: ${_lastUpdated!.toLocal()}'.split('.').first,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ),
+          if (_refreshing) const LinearProgressIndicator(),
+          Expanded(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : RefreshIndicator(
+                    onRefresh: _refreshFromServer,
+                    child: _sources.isEmpty
+                        ? ListView(
+                            children: const [
+                              SizedBox(height: 120),
+                              Center(child: Text('No cached income data. Pull down to fetch.')),
+                            ],
+                          )
+                        : ListView(
+                            padding: const EdgeInsets.all(16),
+                            children: [
+                              for (final s in _sources)
+                                Card(
+                                  child: ListTile(
+                                    title: Text(s['source'] as String),
+                                    subtitle: Text(
+                                      'Expected: ${(s['expected'] as num).toStringAsFixed(2)} DT',
+                                    ),
+                                    trailing: Column(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      crossAxisAlignment: CrossAxisAlignment.end,
+                                      children: [
+                                        Text(
+                                          '${(s['actual'] as num).toStringAsFixed(2)} DT',
+                                          style: const TextStyle(fontWeight: FontWeight.bold),
+                                        ),
+                                        Text(
+                                          '${(s['difference'] as num) >= 0 ? '+' : ''}${(s['difference'] as num).toStringAsFixed(2)}',
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color: (s['difference'] as num) >= 0
+                                                ? Colors.green
+                                                : Colors.red,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    onTap: () => _editSource(s),
                                   ),
                                 ),
-                              ],
-                            ),
-                            onTap: () => _editSource(s),
+                            ],
                           ),
-                        ),
-                    ],
                   ),
-                ),
+          ),
+        ],
+      ),
     );
   }
 }

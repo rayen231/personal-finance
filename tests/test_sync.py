@@ -77,6 +77,38 @@ def test_sync_partial_failure_reports_both_lists(client: TestClient):
     assert "invalid" in body["failed"][0]["reason"].lower() or "not valid" in body["failed"][0]["reason"].lower()
 
 
+def test_synced_transaction_id_matches_client_transaction_id(client: TestClient):
+    # The app needs a stable id it already knows (its own
+    # client_transaction_id) to later update/delete this transaction -
+    # the server must not generate a disconnected id of its own.
+    client.post("/api/v1/sync", json={"operations": [_op("tx-stable-id")]})
+    listed = client.get("/api/v1/months/2026/9/transactions").json()
+    assert listed[0]["id"] == "tx-stable-id"
+
+
+def test_sync_prevents_duplicate_even_if_ledger_is_stale(client: TestClient, data_dir):
+    # Simulates the real bug: two /sync requests racing (e.g. a double-tap,
+    # or two separate serverless instances) where the per-year ledger
+    # hasn't recorded the id yet when the second request's check runs.
+    # The workbook-level check (does a row with this TransactionID already
+    # exist?) must catch it independently of the ledger.
+    payload = {"operations": [_op("tx-race")]}
+    first = client.post("/api/v1/sync", json=payload).json()
+    assert first["processed"] == ["tx-race"]
+
+    ledger_file = data_dir / "sync_state_2026.json"
+    assert ledger_file.exists()
+    ledger_file.unlink()  # simulate the ledger not having recorded it yet
+
+    second = client.post("/api/v1/sync", json=payload).json()
+    assert second["processed"] == ["tx-race"]
+    assert second["failed"] == []
+
+    listed = client.get("/api/v1/months/2026/9/transactions").json()
+    matching = [t for t in listed if t["id"] == "tx-race"]
+    assert len(matching) == 1  # not duplicated
+
+
 def test_sync_rejects_mixed_year_batch(client: TestClient):
     resp = client.post(
         "/api/v1/sync",

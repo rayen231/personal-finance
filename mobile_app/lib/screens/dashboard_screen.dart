@@ -4,9 +4,10 @@ import 'package:flutter/material.dart';
 import '../config/app_config.dart';
 import '../models/transaction.dart';
 import '../services/api_client.dart';
+import '../services/data_refresh_service.dart';
 import '../services/db_service.dart';
-import '../services/import_service.dart';
 import '../utils/type_style.dart';
+import '../widgets/month_selector.dart';
 
 class DashboardScreen extends StatefulWidget {
   final AppConfig config;
@@ -17,33 +18,37 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class DashboardScreenState extends State<DashboardScreen> {
-  final _now = DateTime.now();
+  late int _year = DateTime.now().year;
+  late int _month = DateTime.now().month;
   Map<String, dynamic>? _summary;
   List<LocalTransaction> _monthTransactions = [];
+  DateTime? _lastUpdated;
   bool _loading = true;
+  bool _refreshing = false;
   String? _error;
 
   @override
   void initState() {
     super.initState();
-    _load();
+    _loadFromCache();
   }
 
-  /// Public so HomeShell can trigger a reload after Add Transaction closes.
-  Future<void> refresh() => _load();
+  /// Public so HomeShell can trigger a cheap (no-network) reload after a
+  /// local-only change (adding a transaction) or after Sync Now already
+  /// refreshed the cache itself.
+  Future<void> reloadFromCache() => _loadFromCache();
 
-  Future<void> _load() async {
+  Future<void> _loadFromCache() async {
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      final api = ApiClient(widget.config);
-      await ImportService(api).importMonth(_now.year, _now.month);
-      final summary = await api.getSummary(_now.year, _now.month);
-      final txs = await DbService.listForMonth(_now.year, _now.month);
+      final cached = await DbService.getCache(DataRefreshService.summaryKey(_year, _month));
+      final txs = await DbService.listForMonth(_year, _month);
       setState(() {
-        _summary = summary;
+        _summary = cached?.$1 as Map<String, dynamic>?;
+        _lastUpdated = cached?.$2;
         _monthTransactions = txs;
         _loading = false;
       });
@@ -53,6 +58,28 @@ class DashboardScreenState extends State<DashboardScreen> {
         _loading = false;
       });
     }
+  }
+
+  Future<void> _refreshFromServer() async {
+    setState(() => _refreshing = true);
+    try {
+      await DataRefreshService(ApiClient(widget.config)).refreshMonth(_year, _month);
+      await _loadFromCache();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Refresh failed: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => _refreshing = false);
+    }
+  }
+
+  void _onMonthChanged((int, int) ym) {
+    setState(() {
+      _year = ym.$1;
+      _month = ym.$2;
+    });
+    _loadFromCache();
   }
 
   Map<String, double> get _expenseByCategory {
@@ -75,94 +102,112 @@ class DashboardScreenState extends State<DashboardScreen> {
             children: [
               Text('Could not load dashboard: $_error', textAlign: TextAlign.center),
               const SizedBox(height: 12),
-              FilledButton(onPressed: _load, child: const Text('Retry')),
+              FilledButton(onPressed: _refreshFromServer, child: const Text('Retry (Sync)')),
             ],
           ),
         ),
       );
     }
 
-    final s = _summary!;
-    final income = s['income'] as Map<String, dynamic>;
-    final freeMoney = s['free_money'] as Map<String, dynamic>;
+    final s = _summary;
 
     return RefreshIndicator(
-      onRefresh: _load,
+      onRefresh: _refreshFromServer,
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          Text(
-            _monthLabel(_now),
-            style: Theme.of(context).textTheme.titleLarge,
+          MonthSelector(year: _year, month: _month, onChanged: _onMonthChanged),
+          const SizedBox(height: 4),
+          Center(
+            child: Text(
+              _lastUpdated == null
+                  ? 'Never synced - pull down or tap Sync Now'
+                  : 'Last synced: ${_formatWhen(_lastUpdated!)}',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
           ),
           const SizedBox(height: 12),
-          GridView.count(
-            crossAxisCount: 2,
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            mainAxisSpacing: 8,
-            crossAxisSpacing: 8,
-            childAspectRatio: 1.6,
-            children: [
-              _StatCard(
-                label: 'Income (actual)',
-                value: income['actual'],
-                icon: Icons.account_balance_wallet,
-                color: Colors.green,
-              ),
-              _StatCard(
-                label: 'Necessary Expenses',
-                value: s['necessary_expenses_actual'],
-                icon: Icons.shopping_cart,
-                color: TypeStyle.color('Expense'),
-              ),
-              _StatCard(
-                label: 'Free Money Spent',
-                value: freeMoney['spent'],
-                icon: Icons.celebration,
-                color: TypeStyle.color('Free Money'),
-              ),
-              _StatCard(
-                label: 'Investments',
-                value: s['investments_actual'],
-                icon: Icons.trending_up,
-                color: TypeStyle.color('Investment'),
-              ),
-              _StatCard(
-                label: 'Extra Savings',
-                value: s['extra_savings'],
-                icon: Icons.savings,
-                color: Colors.indigo,
-              ),
-              _StatCard(
-                label: 'Total Savings',
-                value: s['total_savings'],
-                icon: Icons.account_balance,
-                color: Colors.indigo,
-              ),
-            ],
-          ),
-          const SizedBox(height: 24),
-          Text('Spending by category', style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 12),
-          if (_expenseByCategory.isEmpty)
+          if (_refreshing) const LinearProgressIndicator(),
+          if (s == null)
             const Padding(
-              padding: EdgeInsets.symmetric(vertical: 24),
-              child: Text('No expenses recorded this month yet.'),
+              padding: EdgeInsets.symmetric(vertical: 48),
+              child: Center(child: Text('No cached data for this month yet.')),
             )
-          else
-            SizedBox(height: 220, child: _CategoryBarChart(data: _expenseByCategory)),
+          else ...[
+            _buildStats(s),
+            const SizedBox(height: 24),
+            Text('Spending by category', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 12),
+            if (_expenseByCategory.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: Text('No expenses recorded this month yet.'),
+              )
+            else
+              SizedBox(height: 220, child: _CategoryBarChart(data: _expenseByCategory)),
+          ],
         ],
       ),
     );
   }
 
-  String _monthLabel(DateTime d) {
-    const months = [
-      'January', 'February', 'March', 'April', 'May', 'June',
-      'July', 'August', 'September', 'October', 'November', 'December',
-    ];
-    return '${months[d.month - 1]} ${d.year}';
+  Widget _buildStats(Map<String, dynamic> s) {
+    final income = s['income'] as Map<String, dynamic>;
+    final freeMoney = s['free_money'] as Map<String, dynamic>;
+    return GridView.count(
+      crossAxisCount: 2,
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      mainAxisSpacing: 8,
+      crossAxisSpacing: 8,
+      childAspectRatio: 1.6,
+      children: [
+        _StatCard(
+          label: 'Income (actual)',
+          value: income['actual'],
+          icon: Icons.account_balance_wallet,
+          color: Colors.green,
+        ),
+        _StatCard(
+          label: 'Necessary Expenses',
+          value: s['necessary_expenses_actual'],
+          icon: Icons.shopping_cart,
+          color: TypeStyle.color('Expense'),
+        ),
+        _StatCard(
+          label: 'Free Money Spent',
+          value: freeMoney['spent'],
+          icon: Icons.celebration,
+          color: TypeStyle.color('Free Money'),
+        ),
+        _StatCard(
+          label: 'Investments',
+          value: s['investments_actual'],
+          icon: Icons.trending_up,
+          color: TypeStyle.color('Investment'),
+        ),
+        _StatCard(
+          label: 'Extra Savings',
+          value: s['extra_savings'],
+          icon: Icons.savings,
+          color: Colors.indigo,
+        ),
+        _StatCard(
+          label: 'Total Savings',
+          value: s['total_savings'],
+          icon: Icons.account_balance,
+          color: Colors.indigo,
+        ),
+      ],
+    );
+  }
+
+  String _formatWhen(DateTime d) {
+    final diff = DateTime.now().difference(d);
+    if (diff.inMinutes < 1) return 'just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    return '${diff.inDays}d ago';
   }
 }
 

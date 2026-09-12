@@ -112,3 +112,73 @@ def test_add_duplicate_subcategory_is_idempotent(client: TestClient):
     subs = client.get("/api/v1/setup/2026/subcategories").json()
     chicken_count = sum(1 for s in subs if s == {"category": "Food", "subcategory": "Chicken"})
     assert chicken_count == 1
+
+
+def test_add_free_money_category_with_spare_row(client: TestClient, data_dir):
+    import openpyxl
+
+    # tbl_FreeMoneyCategories is genuinely at capacity in the real fixture
+    # (5/5 rows filled) - free one up to test the actual add path, same
+    # situation as tbl_Subcategories before it was relocated.
+    path = data_dir / "Personal_Finance_2026_V1.xlsx"
+    wb = openpyxl.load_workbook(path)
+    wb["SETUP"]["A20"] = None  # last row of tbl_FreeMoneyCategories ("Other")
+    wb.save(path)
+
+    add = client.post("/api/v1/setup/2026/free-money-categories", json={"value": "Gaming"})
+    assert add.status_code == 201
+    assert "Gaming" in client.get("/api/v1/setup/2026/free-money-categories").json()
+
+
+def test_edit_and_delete_free_money_category(client: TestClient):
+    # Uses an existing entry rather than adding a new one, since the real
+    # list has no spare capacity.
+    rename = client.put(
+        "/api/v1/setup/2026/free-money-categories/Other", json={"value": "Miscellaneous"}
+    )
+    assert rename.status_code == 200
+    categories = client.get("/api/v1/setup/2026/free-money-categories").json()
+    assert "Miscellaneous" in categories
+    assert "Other" not in categories
+
+    delete = client.delete("/api/v1/setup/2026/free-money-categories/Miscellaneous")
+    assert delete.status_code == 204
+    assert "Miscellaneous" not in client.get("/api/v1/setup/2026/free-money-categories").json()
+
+
+def test_delete_unknown_list_value_returns_404(client: TestClient):
+    resp = client.delete("/api/v1/setup/2026/investment-areas/NotARealArea")
+    assert resp.status_code == 404
+    assert resp.json()["detail"]["error"] == "not_found"
+
+
+def test_add_duplicate_list_value_is_idempotent(client: TestClient):
+    first = client.post("/api/v1/setup/2026/income-sources", json={"value": "Roundesk"})
+    assert first.status_code == 201
+    sources = client.get("/api/v1/setup/2026/income-sources").json()
+    assert sources.count("Roundesk") == 1
+
+
+def test_edit_and_delete_subcategory(client: TestClient):
+    add = client.post(
+        "/api/v1/setup/2026/subcategories", json={"category": "Housing", "subcategory": "Repairs"}
+    )
+    assert add.status_code == 201
+
+    rename = client.put(
+        "/api/v1/setup/2026/subcategories/Housing/Repairs", json={"subcategory": "Maintenance"}
+    )
+    assert rename.status_code == 200
+    subs = client.get("/api/v1/setup/2026/subcategories").json()
+    assert {"category": "Housing", "subcategory": "Maintenance"} in subs
+    assert {"category": "Housing", "subcategory": "Repairs"} not in subs
+
+    delete = client.delete("/api/v1/setup/2026/subcategories/Housing/Maintenance")
+    assert delete.status_code == 204
+    subs = client.get("/api/v1/setup/2026/subcategories").json()
+    assert {"category": "Housing", "subcategory": "Maintenance"} not in subs
+
+
+def test_invalid_list_kind_rejected(client: TestClient):
+    resp = client.post("/api/v1/setup/2026/not-a-real-list", json={"value": "X"})
+    assert resp.status_code == 422

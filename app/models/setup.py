@@ -13,6 +13,14 @@ class SubcategoryCreate(BaseModel):
     subcategory: str
 
 
+class ListValuePayload(BaseModel):
+    value: str
+
+
+class SubcategoryRename(BaseModel):
+    subcategory: str
+
+
 class RecurringExpenseOut(BaseModel):
     expense: str
     category: Optional[str]

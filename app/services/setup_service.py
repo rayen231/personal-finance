@@ -152,6 +152,98 @@ def read_recurring_expenses(wb: Workbook) -> list[dict]:
     return results
 
 
+def _find_value_row(ws, table_name: str, value: str) -> int:
+    min_col, min_row, max_col, max_row = range_boundaries(ws.tables[table_name].ref)
+    excluded_rows = _rows_claimed_by_other_tables(ws, table_name, min_col, max_col)
+    for row in range(min_row + 1, max_row + 1):
+        if row in excluded_rows:
+            continue
+        if ws.cell(row=row, column=min_col).value == value:
+            return row
+    raise LabelNotFoundError(f"'{value}' not found in {table_name}.")
+
+
+def add_single_value(wb: Workbook, table_name: str, value: str) -> bool:
+    """Generic add for a single-column SETUP list (categories, income
+    sources, etc.). Returns True if written, False if it already existed
+    (idempotent no-op)."""
+    ws = wb["SETUP"]
+    if table_name not in ws.tables:
+        raise WorkbookError(f"Table {table_name} not found in SETUP")
+
+    try:
+        _find_value_row(ws, table_name, value)
+        return False  # already exists
+    except LabelNotFoundError:
+        pass
+
+    min_col, min_row, max_col, max_row = range_boundaries(ws.tables[table_name].ref)
+    excluded_rows = _rows_claimed_by_other_tables(ws, table_name, min_col, max_col)
+    for row in range(min_row + 1, max_row + 1):
+        if row in excluded_rows:
+            continue
+        if ws.cell(row=row, column=min_col).value is None:
+            ws.cell(row=row, column=min_col, value=value)
+            return True
+
+    raise TableFullError(
+        f"{table_name} is full (no blank row up to row {max_row}). Add rows to the table in Excel first."
+    )
+
+
+def edit_single_value(wb: Workbook, table_name: str, old_value: str, new_value: str) -> None:
+    """Renames an entry in a single-column SETUP list in place. Does not
+    cascade to historical transactions that reference the old value - they
+    keep referencing whatever text they already stored."""
+    ws = wb["SETUP"]
+    if table_name not in ws.tables:
+        raise WorkbookError(f"Table {table_name} not found in SETUP")
+    row = _find_value_row(ws, table_name, old_value)
+    min_col, _, _, _ = range_boundaries(ws.tables[table_name].ref)
+    ws.cell(row=row, column=min_col, value=new_value)
+
+
+def delete_single_value(wb: Workbook, table_name: str, value: str) -> None:
+    """Clears an entry from a single-column SETUP list. Does not touch any
+    historical transactions already using this value."""
+    ws = wb["SETUP"]
+    if table_name not in ws.tables:
+        raise WorkbookError(f"Table {table_name} not found in SETUP")
+    row = _find_value_row(ws, table_name, value)
+    min_col, _, _, _ = range_boundaries(ws.tables[table_name].ref)
+    ws.cell(row=row, column=min_col).value = None
+
+
+def _find_subcategory_row(ws, category: str, subcategory: str) -> int:
+    table_name = "tbl_Subcategories"
+    min_col, min_row, max_col, max_row = range_boundaries(ws.tables[table_name].ref)
+    excluded_rows = _rows_claimed_by_other_tables(ws, table_name, min_col, max_col)
+    for row in range(min_row + 1, max_row + 1):
+        if row in excluded_rows:
+            continue
+        if (
+            ws.cell(row=row, column=min_col).value == category
+            and ws.cell(row=row, column=min_col + 1).value == subcategory
+        ):
+            return row
+    raise LabelNotFoundError(f"Subcategory '{subcategory}' not found under category '{category}'.")
+
+
+def edit_subcategory(wb: Workbook, category: str, old_subcategory: str, new_subcategory: str) -> None:
+    ws = wb["SETUP"]
+    row = _find_subcategory_row(ws, category, old_subcategory)
+    min_col, _, _, _ = range_boundaries(ws.tables["tbl_Subcategories"].ref)
+    ws.cell(row=row, column=min_col + 1, value=new_subcategory)
+
+
+def delete_subcategory(wb: Workbook, category: str, subcategory: str) -> None:
+    ws = wb["SETUP"]
+    row = _find_subcategory_row(ws, category, subcategory)
+    min_col, _, _, _ = range_boundaries(ws.tables["tbl_Subcategories"].ref)
+    ws.cell(row=row, column=min_col).value = None
+    ws.cell(row=row, column=min_col + 1).value = None
+
+
 def add_subcategory(wb: Workbook, category: str, subcategory: str) -> bool:
     """Returns True if a new row was written, False if the pair already
     existed (idempotent no-op) - callers use this to decide whether the

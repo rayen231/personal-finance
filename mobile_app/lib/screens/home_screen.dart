@@ -4,10 +4,12 @@ import 'package:flutter/material.dart';
 
 import '../config/app_config.dart';
 import '../services/api_client.dart';
+import '../services/data_refresh_service.dart';
 import '../services/sync_service.dart';
 import 'add_transaction_screen.dart';
 import 'dashboard_screen.dart';
 import 'income_screen.dart';
+import 'manage_categories_screen.dart';
 import 'plan_screen.dart';
 import 'settings_screen.dart';
 import 'transactions_screen.dart';
@@ -56,9 +58,9 @@ class _HomeScreenState extends State<HomeScreen> {
     _hourlyTimer = Timer.periodic(const Duration(hours: 1), (_) => _sync());
   }
 
-  Future<void> _refreshTabs() async {
-    await _dashboardKey.currentState?.refresh();
-    await _transactionsKey.currentState?.refresh();
+  Future<void> _reloadTabsFromCache() async {
+    await _dashboardKey.currentState?.reloadFromCache();
+    await _transactionsKey.currentState?.reloadFromCache();
   }
 
   Future<void> _openSettings() async {
@@ -69,7 +71,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (changed == true) {
       final config = await AppConfig.load();
       setState(() => _config = config);
-      await _refreshTabs();
+      await _reloadTabsFromCache();
     }
   }
 
@@ -85,15 +87,23 @@ class _HomeScreenState extends State<HomeScreen> {
       MaterialPageRoute(builder: (_) => AddTransactionScreen(config: _config!)),
     );
     if (added == true) {
-      await _refreshTabs();
+      await _reloadTabsFromCache();
     }
   }
 
   Future<void> _sync() async {
     if (_config == null || !_config!.isConfigured) return;
+    // Guards against the hourly timer firing while a manual sync (or vice
+    // versa) is already in flight - the server-side fix makes a genuine
+    // duplicate impossible either way, but there's no reason to fire two
+    // redundant network round trips.
+    if (_syncing) return;
     setState(() => _syncing = true);
     try {
-      final outcome = await SyncService(ApiClient(_config!)).syncPending();
+      final api = ApiClient(_config!);
+      final outcome = await SyncService(api).syncPending();
+      final now = DateTime.now();
+      await DataRefreshService(api).refreshMonth(now.year, now.month);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(
@@ -103,7 +113,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ));
       }
-      await _refreshTabs();
+      await _reloadTabsFromCache();
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Sync failed: $e')));
@@ -160,6 +170,11 @@ class _HomeScreenState extends State<HomeScreen> {
               leading: const Icon(Icons.calendar_view_month),
               title: const Text('Yearly Overview'),
               onTap: () => _openScreen((c) => YearlyOverviewScreen(config: c)),
+            ),
+            ListTile(
+              leading: const Icon(Icons.category),
+              title: const Text('Manage Categories'),
+              onTap: () => _openScreen((c) => ManageCategoriesScreen(config: c)),
             ),
             const Divider(),
             ListTile(

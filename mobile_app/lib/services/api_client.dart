@@ -121,6 +121,71 @@ class ApiClient {
     _checkOk(resp);
   }
 
+  /// Direct (non-batch) update - only ever called for a transaction that's
+  /// already synced (has a real server id). Requires connectivity; there's
+  /// no offline queue for edits/deletes in V1 (the /sync endpoint only
+  /// supports creates).
+  Future<void> updateTransaction(int year, int month, String id, Map<String, dynamic> fields) async {
+    final resp = await http.put(
+      _uri('/api/v1/months/$year/$month/transactions/$id'),
+      headers: _headers,
+      body: jsonEncode(fields),
+    );
+    _checkOk(resp);
+  }
+
+  Future<void> deleteTransaction(int year, int month, String id) async {
+    final resp =
+        await http.delete(_uri('/api/v1/months/$year/$month/transactions/$id'), headers: _headers);
+    _checkOk(resp);
+  }
+
+  Future<void> addListValue(int year, String listKind, String value) async {
+    final resp = await http.post(
+      _uri('/api/v1/setup/$year/$listKind'),
+      headers: _headers,
+      body: jsonEncode({'value': value}),
+    );
+    _checkOk(resp);
+  }
+
+  Future<void> renameListValue(int year, String listKind, String oldValue, String newValue) async {
+    final resp = await http.put(
+      _uri('/api/v1/setup/$year/$listKind/${Uri.encodeComponent(oldValue)}'),
+      headers: _headers,
+      body: jsonEncode({'value': newValue}),
+    );
+    _checkOk(resp);
+  }
+
+  Future<void> deleteListValue(int year, String listKind, String value) async {
+    final resp = await http.delete(
+      _uri('/api/v1/setup/$year/$listKind/${Uri.encodeComponent(value)}'),
+      headers: _headers,
+    );
+    _checkOk(resp);
+  }
+
+  Future<void> renameSubcategory(
+      int year, String category, String oldSubcategory, String newSubcategory) async {
+    final resp = await http.put(
+      _uri(
+          '/api/v1/setup/$year/subcategories/${Uri.encodeComponent(category)}/${Uri.encodeComponent(oldSubcategory)}'),
+      headers: _headers,
+      body: jsonEncode({'subcategory': newSubcategory}),
+    );
+    _checkOk(resp);
+  }
+
+  Future<void> deleteSubcategory(int year, String category, String subcategory) async {
+    final resp = await http.delete(
+      _uri(
+          '/api/v1/setup/$year/subcategories/${Uri.encodeComponent(category)}/${Uri.encodeComponent(subcategory)}'),
+      headers: _headers,
+    );
+    _checkOk(resp);
+  }
+
   Future<SyncResult> sync(List<LocalTransaction> pending, {String clientId = 'flutter-app'}) async {
     final body = jsonEncode({
       'client_id': clientId,

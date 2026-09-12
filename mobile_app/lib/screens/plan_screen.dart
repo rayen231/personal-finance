@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 
 import '../config/app_config.dart';
 import '../services/api_client.dart';
+import '../services/data_refresh_service.dart';
+import '../services/db_service.dart';
+import '../widgets/month_selector.dart';
 
 class PlanScreen extends StatefulWidget {
   final AppConfig config;
@@ -12,39 +15,84 @@ class PlanScreen extends StatefulWidget {
 }
 
 class _PlanScreenState extends State<PlanScreen> {
-  final _now = DateTime.now();
+  late int _year = DateTime.now().year;
+  late int _month = DateTime.now().month;
+
   final _minSavingsController = TextEditingController();
-  final Map<String, TextEditingController> _necessaryControllers = {};
+  // category -> list of (subcategory, controller). Purely a local input
+  // convenience: the API only stores one planned total per category, so
+  // these per-subcategory amounts are kept in local cache and summed into
+  // that total on save - they aren't sent individually.
+  final Map<String, List<(String, TextEditingController)>> _necessaryDetail = {};
   final Map<String, TextEditingController> _freeMoneyControllers = {};
 
   double _investmentsPlannedTotal = 0;
+  DateTime? _lastUpdated;
   bool _loading = true;
   bool _saving = false;
   String? _error;
 
   ApiClient get _api => ApiClient(widget.config);
 
+  static String _detailKey(int year, int month) => 'plan_subcat_detail:$year:$month';
+
   @override
   void initState() {
     super.initState();
-    _load();
+    _loadFromCache();
   }
 
-  Future<void> _load() async {
+  Future<void> _loadFromCache() async {
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      final plan = await _api.getPlan(_now.year, _now.month);
+      final planCached = await DbService.getCache(DataRefreshService.planKey(_year, _month));
+      final setupCached = await DbService.getCache(DataRefreshService.setupKey(_year));
+      final detailCached = await DbService.getCache(_detailKey(_year, _month));
+
+      if (planCached == null || setupCached == null) {
+        setState(() {
+          _lastUpdated = null;
+          _loading = false;
+        });
+        return;
+      }
+
+      final plan = planCached.$1 as Map<String, dynamic>;
+      final setup = setupCached.$1 as Map<String, dynamic>;
+      final detail = (detailCached?.$1 as Map<String, dynamic>?) ?? {};
+
       _minSavingsController.text = (plan['minimum_savings'] as num).toStringAsFixed(2);
 
+      final subcategoriesByCategory = <String, List<String>>{};
+      for (final pair in (setup['subcategories'] as List).cast<Map<String, dynamic>>()) {
+        subcategoriesByCategory
+            .putIfAbsent(pair['category'] as String, () => [])
+            .add(pair['subcategory'] as String);
+      }
+
+      _necessaryDetail.clear();
       final necessary = (plan['necessary_expenses_planned'] as Map).cast<String, dynamic>();
-      necessary.forEach((category, amount) {
-        _necessaryControllers[category] =
-            TextEditingController(text: (amount as num).toStringAsFixed(2));
+      necessary.forEach((category, total) {
+        final subs = subcategoriesByCategory[category] ?? [];
+        final categoryDetail = (detail[category] as Map<String, dynamic>?) ?? {};
+        if (subs.isEmpty) {
+          // No known subcategories for this one (e.g. "Other") - fall back
+          // to a single total field, same as before.
+          _necessaryDetail[category] = [
+            ('(total)', TextEditingController(text: (total as num).toStringAsFixed(2)))
+          ];
+        } else {
+          _necessaryDetail[category] = [
+            for (final sub in subs)
+              (sub, TextEditingController(text: ((categoryDetail[sub] as num?) ?? 0).toStringAsFixed(2)))
+          ];
+        }
       });
 
+      _freeMoneyControllers.clear();
       final freeMoney = (plan['free_money_planned'] as Map).cast<String, dynamic>();
       freeMoney.forEach((category, amount) {
         _freeMoneyControllers[category] =
@@ -53,6 +101,7 @@ class _PlanScreenState extends State<PlanScreen> {
 
       setState(() {
         _investmentsPlannedTotal = (plan['investments_planned_total'] as num).toDouble();
+        _lastUpdated = planCached.$2;
         _loading = false;
       });
     } catch (e) {
@@ -63,20 +112,59 @@ class _PlanScreenState extends State<PlanScreen> {
     }
   }
 
+  Future<void> _refreshFromServer() async {
+    setState(() => _saving = true);
+    try {
+      final setup = await _api.getSetup(_year);
+      await DbService.setCache(DataRefreshService.setupKey(_year), setup);
+      final plan = await _api.getPlan(_year, _month);
+      await DbService.setCache(DataRefreshService.planKey(_year, _month), plan);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Refresh failed: $e')));
+      }
+    }
+    await _loadFromCache();
+    if (mounted) setState(() => _saving = false);
+  }
+
+  void _onMonthChanged((int, int) ym) {
+    setState(() {
+      _year = ym.$1;
+      _month = ym.$2;
+    });
+    _loadFromCache();
+  }
+
+  double _categoryTotal(String category) =>
+      _necessaryDetail[category]!.fold(0.0, (sum, e) => sum + (double.tryParse(e.$2.text) ?? 0));
+
   Future<void> _save() async {
     setState(() => _saving = true);
     try {
+      // Persist the per-subcategory breakdown locally (the API has no
+      // storage for it - only the category total is sent).
+      final detailToCache = <String, Map<String, double>>{};
+      for (final entry in _necessaryDetail.entries) {
+        if (entry.value.length == 1 && entry.value.first.$1 == '(total)') continue;
+        detailToCache[entry.key] = {
+          for (final (sub, controller) in entry.value) sub: double.tryParse(controller.text) ?? 0,
+        };
+      }
+      await DbService.setCache(_detailKey(_year, _month), detailToCache);
+
       await _api.updatePlan(
-        _now.year,
-        _now.month,
+        _year,
+        _month,
         minimumSavings: double.tryParse(_minSavingsController.text),
-        necessaryExpensesPlanned: _necessaryControllers.map(
-          (category, c) => MapEntry(category, double.tryParse(c.text) ?? 0),
-        ),
+        necessaryExpensesPlanned: {
+          for (final category in _necessaryDetail.keys) category: _categoryTotal(category),
+        },
         freeMoneyPlanned: _freeMoneyControllers.map(
           (category, c) => MapEntry(category, double.tryParse(c.text) ?? 0),
         ),
       );
+      await _refreshFromServer();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Plan saved.')));
     } catch (e) {
@@ -91,87 +179,147 @@ class _PlanScreenState extends State<PlanScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Monthly Plan')),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : _error != null
-              ? Center(child: Text('Error: $_error'))
-              : ListView(
-                  padding: const EdgeInsets.all(16),
-                  children: [
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: TextField(
-                          controller: _minSavingsController,
-                          decoration: const InputDecoration(labelText: 'Minimum Savings (DT)'),
-                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Text('Necessary Expenses - Planned', style: Theme.of(context).textTheme.titleMedium),
-                    const SizedBox(height: 8),
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: Column(
-                          children: [
-                            for (final entry in _necessaryControllers.entries)
-                              Padding(
-                                padding: const EdgeInsets.symmetric(vertical: 4),
-                                child: TextField(
-                                  controller: entry.value,
-                                  decoration: InputDecoration(labelText: entry.key, suffixText: 'DT'),
-                                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: MonthSelector(year: _year, month: _month, onChanged: _onMonthChanged),
+          ),
+          Text(
+            _lastUpdated == null ? 'Never synced' : 'Last synced: ${_lastUpdated!.toLocal()}'.split('.').first,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 4),
+          Expanded(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : _error != null
+                    ? Center(child: Text('Error: $_error'))
+                    : _lastUpdated == null
+                        ? RefreshIndicator(
+                            onRefresh: _refreshFromServer,
+                            child: ListView(
+                              children: const [
+                                SizedBox(height: 120),
+                                Center(child: Text('No cached plan data. Pull down to fetch.')),
+                              ],
+                            ),
+                          )
+                        : RefreshIndicator(
+                            onRefresh: _refreshFromServer,
+                            child: ListView(
+                              padding: const EdgeInsets.all(16),
+                              children: [
+                                Card(
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(16),
+                                    child: TextField(
+                                      controller: _minSavingsController,
+                                      decoration:
+                                          const InputDecoration(labelText: 'Minimum Savings (DT)'),
+                                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                    ),
+                                  ),
                                 ),
-                              ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Text('Free Money - Planned Allocation', style: Theme.of(context).textTheme.titleMedium),
-                    const SizedBox(height: 8),
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: Column(
-                          children: [
-                            for (final entry in _freeMoneyControllers.entries)
-                              Padding(
-                                padding: const EdgeInsets.symmetric(vertical: 4),
-                                child: TextField(
-                                  controller: entry.value,
-                                  decoration: InputDecoration(labelText: entry.key, suffixText: 'DT'),
-                                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                const SizedBox(height: 16),
+                                Text('Necessary Expenses - Planned',
+                                    style: Theme.of(context).textTheme.titleMedium),
+                                const SizedBox(height: 8),
+                                for (final category in _necessaryDetail.keys) _buildCategoryCard(category),
+                                const SizedBox(height: 16),
+                                Text('Free Money - Planned Allocation',
+                                    style: Theme.of(context).textTheme.titleMedium),
+                                const SizedBox(height: 8),
+                                Card(
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                                    child: Column(
+                                      children: [
+                                        for (final entry in _freeMoneyControllers.entries)
+                                          Padding(
+                                            padding: const EdgeInsets.symmetric(vertical: 4),
+                                            child: TextField(
+                                              controller: entry.value,
+                                              decoration: InputDecoration(
+                                                  labelText: entry.key, suffixText: 'DT'),
+                                              keyboardType:
+                                                  const TextInputType.numberWithOptions(decimal: true),
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                  ),
                                 ),
-                              ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Card(
-                      child: ListTile(
-                        leading: const Icon(Icons.trending_up),
-                        title: const Text('Investments Planned (read-only)'),
-                        subtitle: const Text(
-                          'Fill this in directly in the Excel workbook - the API only reads it.',
-                        ),
-                        trailing: Text('${_investmentsPlannedTotal.toStringAsFixed(2)} DT'),
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    FilledButton.icon(
-                      onPressed: _saving ? null : _save,
-                      icon: _saving
-                          ? const SizedBox(
-                              width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                          : const Icon(Icons.check),
-                      label: const Text('Save Plan'),
-                    ),
-                  ],
+                                const SizedBox(height: 16),
+                                Card(
+                                  child: ListTile(
+                                    leading: const Icon(Icons.trending_up),
+                                    title: const Text('Investments Planned (read-only)'),
+                                    subtitle: const Text(
+                                      'Fill this in directly in the Excel workbook - the API only reads it.',
+                                    ),
+                                    trailing: Text('${_investmentsPlannedTotal.toStringAsFixed(2)} DT'),
+                                  ),
+                                ),
+                                const SizedBox(height: 24),
+                                FilledButton.icon(
+                                  onPressed: _saving ? null : _save,
+                                  icon: _saving
+                                      ? const SizedBox(
+                                          width: 16,
+                                          height: 16,
+                                          child: CircularProgressIndicator(strokeWidth: 2))
+                                      : const Icon(Icons.check),
+                                  label: const Text('Save Plan'),
+                                ),
+                              ],
+                            ),
+                          ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCategoryCard(String category) {
+    final entries = _necessaryDetail[category]!;
+    final isSingleTotal = entries.length == 1 && entries.first.$1 == '(total)';
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(category, style: Theme.of(context).textTheme.titleSmall),
+                if (!isSingleTotal)
+                  Text(
+                    '= ${_categoryTotal(category).toStringAsFixed(2)} DT',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+              ],
+            ),
+            for (final (label, controller) in entries)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: TextField(
+                  controller: controller,
+                  decoration: InputDecoration(
+                    labelText: isSingleTotal ? 'Planned total' : label,
+                    suffixText: 'DT',
+                    isDense: true,
+                  ),
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  onChanged: (_) => setState(() {}), // live-update the sum shown above
                 ),
+              ),
+          ],
+        ),
+      ),
     );
   }
 }

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart';
@@ -33,26 +34,70 @@ class DbService {
     _db = await databaseFactory.openDatabase(
       path,
       options: OpenDatabaseOptions(
-        version: 1,
-        onCreate: (db, version) => db.execute('''
-          CREATE TABLE transactions (
-            client_transaction_id TEXT PRIMARY KEY,
-            year INTEGER NOT NULL,
-            month INTEGER NOT NULL,
-            date TEXT NOT NULL,
-            type TEXT NOT NULL,
-            category TEXT NOT NULL,
-            subcategory TEXT NOT NULL,
-            item TEXT NOT NULL,
-            amount REAL NOT NULL,
-            classification TEXT,
-            notes TEXT,
-            synced INTEGER NOT NULL DEFAULT 0
-          )
-        '''),
+        version: 2,
+        onCreate: (db, version) async {
+          await db.execute('''
+            CREATE TABLE transactions (
+              client_transaction_id TEXT PRIMARY KEY,
+              year INTEGER NOT NULL,
+              month INTEGER NOT NULL,
+              date TEXT NOT NULL,
+              type TEXT NOT NULL,
+              category TEXT NOT NULL,
+              subcategory TEXT NOT NULL,
+              item TEXT NOT NULL,
+              amount REAL NOT NULL,
+              classification TEXT,
+              notes TEXT,
+              synced INTEGER NOT NULL DEFAULT 0
+            )
+          ''');
+          await _createCacheTable(db);
+        },
+        onUpgrade: (db, oldVersion, newVersion) async {
+          if (oldVersion < 2) await _createCacheTable(db);
+        },
       ),
     );
     return _db!;
+  }
+
+  static Future<void> _createCacheTable(Database db) => db.execute('''
+        CREATE TABLE IF NOT EXISTS kv_cache (
+          cache_key TEXT PRIMARY KEY,
+          json_value TEXT NOT NULL,
+          updated_at_ms INTEGER NOT NULL
+        )
+      ''');
+
+  /// Generic cache used for everything that isn't a transaction (setup,
+  /// income, plan, summary) - populated only by an explicit sync
+  /// (SyncService.syncPending / RefreshService), never by a screen opening
+  /// itself. Screens read this instead of calling the API directly, so
+  /// navigating around the app costs zero network requests.
+  static Future<void> setCache(String key, Object value) async {
+    final db = await _open();
+    await db.insert(
+      'kv_cache',
+      {
+        'cache_key': key,
+        'json_value': jsonEncode(value),
+        'updated_at_ms': DateTime.now().millisecondsSinceEpoch,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  /// Returns (value, updatedAt) or null if never cached.
+  static Future<(dynamic, DateTime)?> getCache(String key) async {
+    final db = await _open();
+    final rows = await db.query('kv_cache', where: 'cache_key = ?', whereArgs: [key]);
+    if (rows.isEmpty) return null;
+    final row = rows.first;
+    return (
+      jsonDecode(row['json_value'] as String),
+      DateTime.fromMillisecondsSinceEpoch(row['updated_at_ms'] as int),
+    );
   }
 
   static Future<void> insert(LocalTransaction tx) async {
@@ -100,6 +145,28 @@ class DbService {
       {'synced': 1},
       where: 'client_transaction_id IN ($placeholders)',
       whereArgs: clientTransactionIds.toList(),
+    );
+  }
+
+  /// Replaces a transaction's editable fields in place, keeping its id and
+  /// synced flag as given by the caller (the caller decides whether an edit
+  /// to an already-synced row should flip synced back to false).
+  static Future<void> update(LocalTransaction tx) async {
+    final db = await _open();
+    await db.update(
+      'transactions',
+      tx.toDbMap(),
+      where: 'client_transaction_id = ?',
+      whereArgs: [tx.clientTransactionId],
+    );
+  }
+
+  static Future<void> delete(String clientTransactionId) async {
+    final db = await _open();
+    await db.delete(
+      'transactions',
+      where: 'client_transaction_id = ?',
+      whereArgs: [clientTransactionId],
     );
   }
 }
