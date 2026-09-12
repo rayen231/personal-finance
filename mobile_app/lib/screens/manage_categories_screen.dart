@@ -227,30 +227,34 @@ class _ManageCategoriesScreenState extends State<ManageCategoriesScreen>
     final values = (_setup![jsonKey] as List).cast<String>();
 
     return Scaffold(
-      body: ListView(
-        children: [
-          for (final value in values)
-            ListTile(
-              title: Text(value),
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.edit, size: 20),
-                    onPressed: () async {
-                      final newValue = await _promptText('Rename "$value"', initial: value);
-                      if (newValue.isEmpty || newValue == value) return;
-                      await _renameListValue(listKind, jsonKey, value, newValue);
-                    },
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.delete_outline, size: 20),
-                    onPressed: () => _deleteListValue(listKind, jsonKey, value),
-                  ),
-                ],
-              ),
+      body: ListView.separated(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        itemCount: values.length,
+        separatorBuilder: (_, _) => const Divider(height: 1, indent: 16, endIndent: 16),
+        itemBuilder: (context, i) {
+          final value = values[i];
+          return ListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            title: Text(value),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.edit, size: 20),
+                  onPressed: () async {
+                    final newValue = await _promptText('Rename "$value"', initial: value);
+                    if (newValue.isEmpty || newValue == value) return;
+                    await _renameListValue(listKind, jsonKey, value, newValue);
+                  },
+                ),
+                IconButton(
+                  icon: const Icon(Icons.delete_outline, size: 20),
+                  onPressed: () => _deleteListValue(listKind, jsonKey, value),
+                ),
+              ],
             ),
-        ],
+          );
+        },
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () async {
@@ -281,7 +285,7 @@ class _ManageCategoriesScreenState extends State<ManageCategoriesScreen>
             ),
             for (final sub in byCategory[category] ?? [])
               ListTile(
-                dense: true,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
                 title: Text(sub),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,

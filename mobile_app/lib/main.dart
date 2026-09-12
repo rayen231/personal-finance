@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'screens/home_screen.dart';
+import 'theme/app_theme.dart';
 
 void main() {
   runApp(const MoneyHandlerApp());
@@ -13,7 +14,8 @@ class MoneyHandlerApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Money Handler',
-      theme: ThemeData(colorSchemeSeed: Colors.teal, useMaterial3: true),
+      theme: AppTheme.light(),
+      darkTheme: AppTheme.dark(),
       home: const HomeScreen(),
     );
   }

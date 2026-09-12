@@ -11,6 +11,7 @@ import 'dashboard_screen.dart';
 import 'income_screen.dart';
 import 'manage_categories_screen.dart';
 import 'plan_screen.dart';
+import 'recurring_expenses_screen.dart';
 import 'settings_screen.dart';
 import 'transactions_screen.dart';
 import 'yearly_overview_screen.dart';
@@ -78,7 +79,8 @@ class _HomeScreenState extends State<HomeScreen> {
   void _openScreen(Widget Function(AppConfig) builder) {
     if (_config == null) return;
     Navigator.of(context).pop(); // close the drawer
-    Navigator.of(context).push(MaterialPageRoute(builder: (_) => builder(_config!)));
+    Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => builder(_config!)));
   }
 
   Future<void> _openAddTransaction() async {
@@ -109,14 +111,17 @@ class _HomeScreenState extends State<HomeScreen> {
           outcome.failedCount == 0
               ? 'Synced ${outcome.processedCount} transaction(s).'
               : 'Synced ${outcome.processedCount}, ${outcome.failedCount} failed.',
-          if (outcome.opFailures.isNotEmpty) '${outcome.opFailures.length} other change(s) failed.',
+          if (outcome.opFailures.isNotEmpty)
+            '${outcome.opFailures.length} other change(s) failed.',
         ];
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(parts.join(' '))));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(parts.join(' '))));
       }
       await _reloadTabsFromCache();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Sync failed: $e')));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Sync failed: $e')));
       }
     } finally {
       if (mounted) setState(() => _syncing = false);
@@ -138,26 +143,60 @@ class _HomeScreenState extends State<HomeScreen> {
           IconButton(
             icon: _syncing
                 ? const SizedBox(
-                    width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
                 : const Icon(Icons.sync),
             tooltip: 'Sync Now',
             onPressed: _syncing ? null : _sync,
           ),
-          IconButton(icon: const Icon(Icons.settings), onPressed: _openSettings),
+          IconButton(
+            icon: const Icon(Icons.settings),
+            onPressed: _openSettings,
+          ),
         ],
       ),
       drawer: Drawer(
         child: ListView(
           padding: EdgeInsets.zero,
           children: [
-            const DrawerHeader(
-              child: Align(
-                alignment: Alignment.bottomLeft,
-                child: Text('Money Handler', style: TextStyle(fontSize: 22)),
+            Container(
+              padding: const EdgeInsets.fromLTRB(20, 32, 20, 20),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Theme.of(context).colorScheme.primary,
+                    Theme.of(context).colorScheme.primaryContainer,
+                  ],
+                ),
+              ),
+              child: Row(
+                children: [
+                  CircleAvatar(
+                    radius: 22,
+                    backgroundColor: Colors.white.withValues(alpha: 0.2),
+                    child: Icon(
+                      Icons.account_balance_wallet,
+                      color: Theme.of(context).colorScheme.onPrimary,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    'Money Handler',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      color: Theme.of(context).colorScheme.onPrimary,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
               ),
             ),
+            const SizedBox(height: 8),
             ListTile(
-              leading: const Icon(Icons.account_balance_wallet),
+              leading: const Icon(Icons.account_balance_wallet_outlined),
               title: const Text('Income'),
               onTap: () => _openScreen((c) => IncomeScreen(config: c)),
             ),
@@ -167,18 +206,25 @@ class _HomeScreenState extends State<HomeScreen> {
               onTap: () => _openScreen((c) => PlanScreen(config: c)),
             ),
             ListTile(
+              leading: const Icon(Icons.repeat),
+              title: const Text('Recurring Expenses'),
+              onTap: () =>
+                  _openScreen((c) => RecurringExpensesScreen(config: c)),
+            ),
+            ListTile(
               leading: const Icon(Icons.calendar_view_month),
               title: const Text('Yearly Overview'),
               onTap: () => _openScreen((c) => YearlyOverviewScreen(config: c)),
             ),
             ListTile(
-              leading: const Icon(Icons.category),
+              leading: const Icon(Icons.category_outlined),
               title: const Text('Manage Categories'),
-              onTap: () => _openScreen((c) => ManageCategoriesScreen(config: c)),
+              onTap: () =>
+                  _openScreen((c) => ManageCategoriesScreen(config: c)),
             ),
-            const Divider(),
+            const Divider(indent: 16, endIndent: 16),
             ListTile(
-              leading: const Icon(Icons.settings),
+              leading: const Icon(Icons.settings_outlined),
               title: const Text('Settings'),
               onTap: () {
                 Navigator.of(context).pop();
@@ -195,16 +241,23 @@ class _HomeScreenState extends State<HomeScreen> {
           TransactionsScreen(key: _transactionsKey, config: _config!),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
+      floatingActionButton: FloatingActionButton.extended(
         onPressed: _openAddTransaction,
-        child: const Icon(Icons.add),
+        icon: const Icon(Icons.add),
+        label: const Text('Add'),
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _tabIndex,
         onDestinationSelected: (i) => setState(() => _tabIndex = i),
         destinations: const [
-          NavigationDestination(icon: Icon(Icons.dashboard), label: 'Dashboard'),
-          NavigationDestination(icon: Icon(Icons.receipt_long), label: 'Transactions'),
+          NavigationDestination(
+            icon: Icon(Icons.dashboard),
+            label: 'Dashboard',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.receipt_long),
+            label: 'Transactions',
+          ),
         ],
       ),
     );

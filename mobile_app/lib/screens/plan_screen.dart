@@ -259,9 +259,10 @@ class _PlanScreenState extends State<PlanScreen> {
                                     padding: const EdgeInsets.symmetric(horizontal: 16),
                                     child: Column(
                                       children: [
+                                        const SizedBox(height: 8),
                                         for (final entry in _freeMoneyControllers.entries)
                                           Padding(
-                                            padding: const EdgeInsets.symmetric(vertical: 4),
+                                            padding: const EdgeInsets.only(bottom: 10),
                                             child: TextField(
                                               controller: entry.value,
                                               decoration: InputDecoration(
@@ -327,15 +328,15 @@ class _PlanScreenState extends State<PlanScreen> {
                   ),
               ],
             ),
+            const SizedBox(height: 12),
             for (final (label, controller) in entries)
               Padding(
-                padding: const EdgeInsets.symmetric(vertical: 2),
+                padding: const EdgeInsets.only(bottom: 10),
                 child: TextField(
                   controller: controller,
                   decoration: InputDecoration(
                     labelText: isSingleTotal ? 'Planned total' : label,
                     suffixText: 'DT',
-                    isDense: true,
                   ),
                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
                   onChanged: (_) => setState(() {}), // live-update the sum shown above

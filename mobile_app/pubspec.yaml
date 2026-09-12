@@ -18,6 +18,7 @@ dependencies:
   uuid: ^4.5.1
   intl: ^0.20.2
   fl_chart: ^1.2.0
+  google_fonts: ^8.2.1
 
 dev_dependencies:
   flutter_test:
@@ -25,6 +26,16 @@ dev_dependencies:
   flutter_lints: ^6.0.0
   integration_test:
     sdk: flutter
+  flutter_launcher_icons: ^0.14.4
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/icon/icon.png
+
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: "assets/icon/icon.png"
+  adaptive_icon_background: "#00796B"
+  adaptive_icon_foreground: "assets/icon/icon_foreground.png"

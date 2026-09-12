@@ -134,6 +134,8 @@ class DashboardScreenState extends State<DashboardScreen> {
               child: Center(child: Text('No cached data for this month yet.')),
             )
           else ...[
+            _buildHeroCard(s),
+            const SizedBox(height: 16),
             _buildStats(s),
             const SizedBox(height: 24),
             Text('Spending by category', style: Theme.of(context).textTheme.titleMedium),
@@ -151,23 +153,65 @@ class DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildStats(Map<String, dynamic> s) {
+  Widget _buildHeroCard(Map<String, dynamic> s) {
+    final scheme = Theme.of(context).colorScheme;
     final income = s['income'] as Map<String, dynamic>;
+    final totalSavings = (s['total_savings'] as num).toDouble();
+    final actualIncome = (income['actual'] as num).toDouble();
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(24),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [scheme.primary, scheme.tertiary],
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Total Savings',
+            style: TextStyle(color: scheme.onPrimary.withValues(alpha: 0.85), fontSize: 14),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '${totalSavings.toStringAsFixed(2)} DT',
+            style: TextStyle(
+              color: scheme.onPrimary,
+              fontSize: 34,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Icon(Icons.arrow_downward, size: 16, color: scheme.onPrimary.withValues(alpha: 0.85)),
+              const SizedBox(width: 4),
+              Text(
+                'Income ${actualIncome.toStringAsFixed(0)} DT',
+                style: TextStyle(color: scheme.onPrimary.withValues(alpha: 0.85), fontSize: 13),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStats(Map<String, dynamic> s) {
     final freeMoney = s['free_money'] as Map<String, dynamic>;
     return GridView.count(
       crossAxisCount: 2,
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      mainAxisSpacing: 8,
-      crossAxisSpacing: 8,
-      childAspectRatio: 1.6,
+      mainAxisSpacing: 10,
+      crossAxisSpacing: 10,
+      childAspectRatio: 1.35,
       children: [
-        _StatCard(
-          label: 'Income (actual)',
-          value: income['actual'],
-          icon: Icons.account_balance_wallet,
-          color: Colors.green,
-        ),
         _StatCard(
           label: 'Necessary Expenses',
           value: s['necessary_expenses_actual'],
@@ -190,12 +234,6 @@ class DashboardScreenState extends State<DashboardScreen> {
           label: 'Extra Savings',
           value: s['extra_savings'],
           icon: Icons.savings,
-          color: Colors.indigo,
-        ),
-        _StatCard(
-          label: 'Total Savings',
-          value: s['total_savings'],
-          icon: Icons.account_balance,
           color: Colors.indigo,
         ),
       ],
@@ -234,11 +272,26 @@ class _StatCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Icon(icon, color: color),
-            Text(label, style: Theme.of(context).textTheme.bodySmall),
+            Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.15),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, color: color, size: 18),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              label,
+              style: Theme.of(context).textTheme.bodySmall,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
             Text(
               '${amount.toStringAsFixed(2)} DT',
               style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
           ],
         ),

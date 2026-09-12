@@ -166,6 +166,8 @@ class _IncomeScreenState extends State<IncomeScreen> {
                               for (final s in _sources)
                                 Card(
                                   child: ListTile(
+                                    contentPadding:
+                                        const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                                     title: Text(s['source'] as String),
                                     subtitle: Text(
                                       'Expected: ${(s['expected'] as num).toStringAsFixed(2)} DT',

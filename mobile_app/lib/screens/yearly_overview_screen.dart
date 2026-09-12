@@ -98,6 +98,7 @@ class _MonthRow extends StatelessWidget {
 
     return Card(
       child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         title: Text(_monthAbbrev[month - 1]),
         subtitle: Text('Income: ${income.toStringAsFixed(0)}  •  Expenses: ${necessary.toStringAsFixed(0)}'),
         trailing: Text(
