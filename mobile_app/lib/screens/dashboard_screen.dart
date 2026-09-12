@@ -164,6 +164,7 @@ class DashboardScreenState extends State<DashboardScreen> {
     final income = s['income'] as Map<String, dynamic>;
     final totalSavings = (s['total_savings'] as num).toDouble();
     final actualIncome = (income['actual'] as num).toDouble();
+    final expectedIncome = (income['expected'] as num).toDouble();
 
     return Container(
       width: double.infinity,
@@ -192,13 +193,26 @@ class DashboardScreenState extends State<DashboardScreen> {
               fontWeight: FontWeight.bold,
             ),
           ),
+          // Savings/received income are based on what's actually confirmed
+          // received or spent so far this month, not the plan - showing
+          // "expected" alongside makes clear the plan did register, even
+          // when nothing's been marked received yet (both would otherwise
+          // show 0 and look like the app lost the entered data).
+          if (expectedIncome > 0)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                'Planned income: ${expectedIncome.toStringAsFixed(0)} DT',
+                style: TextStyle(color: scheme.onPrimary.withValues(alpha: 0.7), fontSize: 12),
+              ),
+            ),
           const SizedBox(height: 16),
           Row(
             children: [
               Icon(Icons.arrow_downward, size: 16, color: scheme.onPrimary.withValues(alpha: 0.85)),
               const SizedBox(width: 4),
               Text(
-                'Income ${actualIncome.toStringAsFixed(0)} DT',
+                'Received ${actualIncome.toStringAsFixed(0)} DT',
                 style: TextStyle(color: scheme.onPrimary.withValues(alpha: 0.85), fontSize: 13),
               ),
             ],
