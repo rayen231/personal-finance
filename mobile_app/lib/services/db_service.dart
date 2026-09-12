@@ -34,7 +34,7 @@ class DbService {
     _db = await databaseFactory.openDatabase(
       path,
       options: OpenDatabaseOptions(
-        version: 2,
+        version: 3,
         onCreate: (db, version) async {
           await db.execute('''
             CREATE TABLE transactions (
@@ -53,9 +53,11 @@ class DbService {
             )
           ''');
           await _createCacheTable(db);
+          await _createPendingOpsTable(db);
         },
         onUpgrade: (db, oldVersion, newVersion) async {
           if (oldVersion < 2) await _createCacheTable(db);
+          if (oldVersion < 3) await _createPendingOpsTable(db);
         },
       ),
     );
@@ -67,6 +69,15 @@ class DbService {
           cache_key TEXT PRIMARY KEY,
           json_value TEXT NOT NULL,
           updated_at_ms INTEGER NOT NULL
+        )
+      ''');
+
+  static Future<void> _createPendingOpsTable(Database db) => db.execute('''
+        CREATE TABLE IF NOT EXISTS pending_ops (
+          op_id TEXT PRIMARY KEY,
+          op_type TEXT NOT NULL,
+          payload_json TEXT NOT NULL,
+          created_at_ms INTEGER NOT NULL
         )
       ''');
 
@@ -168,5 +179,42 @@ class DbService {
       where: 'client_transaction_id = ?',
       whereArgs: [clientTransactionId],
     );
+  }
+
+  /// Queue for anything that isn't a transaction create (add-subcategory,
+  /// income/plan edits, category management, transaction update/delete on
+  /// an already-synced row) - queued locally and only actually sent to the
+  /// API by SyncService during Sync Now / the hourly timer, same as
+  /// transactions. `opId` lets a caller de-duplicate (e.g. re-queuing the
+  /// same edit twice replaces rather than doubles up).
+  static Future<void> addPendingOp(String opId, String opType, Map<String, dynamic> payload) async {
+    final db = await _open();
+    await db.insert(
+      'pending_ops',
+      {
+        'op_id': opId,
+        'op_type': opType,
+        'payload_json': jsonEncode(payload),
+        'created_at_ms': DateTime.now().millisecondsSinceEpoch,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  static Future<List<(String id, String type, Map<String, dynamic> payload)>> listPendingOps() async {
+    final db = await _open();
+    final rows = await db.query('pending_ops', orderBy: 'created_at_ms ASC');
+    return rows
+        .map((r) => (
+              r['op_id'] as String,
+              r['op_type'] as String,
+              jsonDecode(r['payload_json'] as String) as Map<String, dynamic>,
+            ))
+        .toList();
+  }
+
+  static Future<void> removePendingOp(String opId) async {
+    final db = await _open();
+    await db.delete('pending_ops', where: 'op_id = ?', whereArgs: [opId]);
   }
 }

@@ -98,21 +98,34 @@ class _IncomeScreenState extends State<IncomeScreen> {
 
     if (saved != true) return;
 
-    final expected = double.tryParse(expectedController.text);
-    final actual = double.tryParse(actualController.text);
-    try {
-      await _api.updateIncome(
-        _year,
-        _month,
-        source['source'] as String,
-        expected: expected,
-        actual: actual,
-      );
-      await _refreshFromServer();
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not save: $e')));
+    final expected = double.tryParse(expectedController.text) ?? (source['expected'] as num).toDouble();
+    final actual = double.tryParse(actualController.text) ?? (source['actual'] as num).toDouble();
+    final sourceName = source['source'] as String;
+
+    // Queued, not sent immediately - this screen only talks to the API via
+    // Sync Now / the hourly timer, same rule as everywhere else. Update
+    // the cached copy optimistically so the change shows right away.
+    await DbService.addPendingOp(
+      'update_income:$_year:$_month:$sourceName',
+      'update_income',
+      {'year': _year, 'month': _month, 'source': sourceName, 'expected': expected, 'actual': actual},
+    );
+
+    final cached = await DbService.getCache(DataRefreshService.incomeKey(_year, _month));
+    if (cached != null) {
+      final list = List<Map<String, dynamic>>.from((cached.$1 as List).cast<Map<String, dynamic>>());
+      final idx = list.indexWhere((s) => s['source'] == sourceName);
+      if (idx != -1) {
+        list[idx] = {
+          'source': sourceName,
+          'expected': expected,
+          'actual': actual,
+          'difference': actual - expected,
+        };
+        await DbService.setCache(DataRefreshService.incomeKey(_year, _month), list);
+      }
     }
+    await _loadFromCache();
   }
 
   @override

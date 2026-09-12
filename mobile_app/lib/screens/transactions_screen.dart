@@ -68,7 +68,7 @@ class TransactionsScreenState extends State<TransactionsScreen> {
 
   Future<void> _openTransaction(LocalTransaction tx) async {
     final changed = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(builder: (_) => EditTransactionScreen(config: widget.config, tx: tx)),
+      MaterialPageRoute(builder: (_) => EditTransactionScreen(tx: tx)),
     );
     if (changed == true) await _loadFromLocal();
   }

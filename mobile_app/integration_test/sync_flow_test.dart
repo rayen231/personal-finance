@@ -63,4 +63,66 @@ void main() {
     );
     expect(delResp.statusCode, 204);
   });
+
+  testWidgets(
+      'a transaction needing a brand-new subcategory syncs via the pending_ops queue',
+      (tester) async {
+    if (_testApiKey.isEmpty) {
+      fail('Pass --dart-define=TEST_API_KEY=<real key> to run this check.');
+    }
+    final config = AppConfig(baseUrl: AppConfig.defaultBaseUrl, apiKey: _testApiKey);
+    final api = ApiClient(config);
+    final newSub = 'IntegrationTestSub-${DateTime.now().millisecondsSinceEpoch}';
+
+    // Simulates exactly what AddTransactionScreen does offline: queue the
+    // subcategory instead of calling the API, then insert the transaction
+    // locally as unsynced.
+    await DbService.addPendingOp(
+      'add_subcategory:Food:$newSub',
+      'add_subcategory',
+      {'year': 2026, 'category': 'Food', 'subcategory': newSub},
+    );
+
+    final tx = LocalTransaction(
+      clientTransactionId: 'flutter-pending-ops-test-${DateTime.now().millisecondsSinceEpoch}',
+      year: 2026,
+      month: 9,
+      date: DateTime(2026, 9, 12),
+      type: 'Expense',
+      category: 'Food',
+      subcategory: newSub,
+      item: 'Pending ops integration test',
+      amount: 3,
+    );
+    await DbService.insert(tx);
+
+    final outcome = await SyncService(api).syncPending();
+    expect(outcome.opFailures, isEmpty, reason: outcome.opFailures.toString());
+    expect(outcome.failedCount, 0, reason: outcome.failures.toString());
+
+    // The pending op must be gone (processed), and the subcategory must be
+    // real on the server now.
+    final remainingOps = await DbService.listPendingOps();
+    expect(remainingOps.any((o) => o.$2 == 'add_subcategory'), isFalse);
+
+    final setup = await api.getSetup(2026);
+    final subs = (setup['subcategories'] as List).cast<Map<String, dynamic>>();
+    expect(subs.any((p) => p['category'] == 'Food' && p['subcategory'] == newSub), isTrue);
+
+    // Clean up: delete the transaction, then the subcategory.
+    final remote = await api.getTransactions(2026, 9);
+    final match = remote.cast<Map<String, dynamic>>().firstWhere(
+          (t) => t['item'] == 'Pending ops integration test',
+          orElse: () => {},
+        );
+    expect(match, isNotEmpty);
+    await http.delete(
+      Uri.parse('${config.baseUrl}/api/v1/months/2026/9/transactions/${match['id']}'),
+      headers: {'X-API-Key': _testApiKey},
+    );
+    await http.delete(
+      Uri.parse('${config.baseUrl}/api/v1/setup/2026/subcategories/Food/$newSub'),
+      headers: {'X-API-Key': _testApiKey},
+    );
+  });
 }

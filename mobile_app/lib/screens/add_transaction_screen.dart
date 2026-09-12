@@ -3,7 +3,7 @@ import 'package:uuid/uuid.dart';
 
 import '../config/app_config.dart';
 import '../models/transaction.dart';
-import '../services/api_client.dart';
+import '../services/data_refresh_service.dart';
 import '../services/db_service.dart';
 import '../utils/type_style.dart';
 
@@ -42,26 +42,30 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
     _loadSetup();
   }
 
+  // Cache-only: this screen must never call the API itself - the app talks
+  // to the network only via Sync Now / the hourly timer. If nothing has
+  // been synced yet, the lists are simply empty and the user is told to
+  // sync first, rather than the screen silently blocking on a network call.
   Future<void> _loadSetup() async {
-    try {
-      final api = ApiClient(widget.config);
-      final setup = await api.getSetup(_date.year);
+    final cached = await DbService.getCache(DataRefreshService.setupKey(_date.year));
+    if (cached == null) {
       setState(() {
-        _expenseCategories = (setup['expense_categories'] as List).cast<String>();
-        _freeMoneyCategories = (setup['free_money_categories'] as List).cast<String>();
-        _investmentAreas = (setup['investment_areas'] as List).cast<String>();
-        _subcategoryPairs = (setup['subcategories'] as List)
-            .cast<Map<String, dynamic>>()
-            .map((p) => {'category': p['category'] as String, 'subcategory': p['subcategory'] as String})
-            .toList();
+        _error = 'No cached categories yet - sync at least once first.';
         _loadingSetup = false;
       });
-    } catch (e) {
-      setState(() {
-        _error = 'Could not load categories: $e';
-        _loadingSetup = false;
-      });
+      return;
     }
+    final setup = cached.$1 as Map<String, dynamic>;
+    setState(() {
+      _expenseCategories = (setup['expense_categories'] as List).cast<String>();
+      _freeMoneyCategories = (setup['free_money_categories'] as List).cast<String>();
+      _investmentAreas = (setup['investment_areas'] as List).cast<String>();
+      _subcategoryPairs = (setup['subcategories'] as List)
+          .cast<Map<String, dynamic>>()
+          .map((p) => {'category': p['category'] as String, 'subcategory': p['subcategory'] as String})
+          .toList();
+      _loadingSetup = false;
+    });
   }
 
   List<String> get _categoryOptions => switch (_type) {
@@ -109,13 +113,27 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
 
     try {
       // A typed-in subcategory for an Expense type must exist in SETUP
-      // before a transaction using it can ever sync - register it now if
-      // it's new, so the user doesn't discover the failure later at sync
-      // time.
+      // before a transaction using it can ever sync. Rather than call the
+      // API right now (this screen never talks to the network directly),
+      // queue it as a pending op for the next sync, and add it to the
+      // cached setup immediately so it shows up in dropdowns right away.
       final isNewExpenseSubcategory =
           _type == 'Expense' && !_subcategoryOptions.contains(subcategory);
       if (isNewExpenseSubcategory) {
-        await ApiClient(widget.config).addSubcategory(_date.year, _category!, subcategory);
+        await DbService.addPendingOp(
+          'add_subcategory:${_category!}:$subcategory',
+          'add_subcategory',
+          {'year': _date.year, 'category': _category!, 'subcategory': subcategory},
+        );
+
+        final cached = await DbService.getCache(DataRefreshService.setupKey(_date.year));
+        if (cached != null) {
+          final setup = Map<String, dynamic>.from(cached.$1 as Map);
+          final subs = List<Map<String, dynamic>>.from(setup['subcategories'] as List);
+          subs.add({'category': _category!, 'subcategory': subcategory});
+          setup['subcategories'] = subs;
+          await DbService.setCache(DataRefreshService.setupKey(_date.year), setup);
+        }
       }
 
       final tx = LocalTransaction(
@@ -157,6 +175,33 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
       return Scaffold(
         appBar: AppBar(title: const Text('Add Transaction')),
         body: const Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    if (_expenseCategories.isEmpty && _freeMoneyCategories.isEmpty && _investmentAreas.isEmpty) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Add Transaction')),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.cloud_off, size: 48),
+                const SizedBox(height: 12),
+                Text(
+                  _error ?? 'No cached categories yet.',
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'Go to Dashboard and pull down to sync, or tap Sync Now.',
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          ),
+        ),
       );
     }
 

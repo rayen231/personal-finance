@@ -153,20 +153,44 @@ class _PlanScreenState extends State<PlanScreen> {
       }
       await DbService.setCache(_detailKey(_year, _month), detailToCache);
 
-      await _api.updatePlan(
-        _year,
-        _month,
-        minimumSavings: double.tryParse(_minSavingsController.text),
-        necessaryExpensesPlanned: {
-          for (final category in _necessaryDetail.keys) category: _categoryTotal(category),
-        },
-        freeMoneyPlanned: _freeMoneyControllers.map(
-          (category, c) => MapEntry(category, double.tryParse(c.text) ?? 0),
-        ),
+      final minimumSavings = double.tryParse(_minSavingsController.text);
+      final necessaryExpensesPlanned = {
+        for (final category in _necessaryDetail.keys) category: _categoryTotal(category),
+      };
+      final freeMoneyPlanned = _freeMoneyControllers.map(
+        (category, c) => MapEntry(category, double.tryParse(c.text) ?? 0),
       );
-      await _refreshFromServer();
+
+      // Queued, not sent immediately - only Sync Now / the hourly timer
+      // talk to the API. Replaces any earlier not-yet-synced edit to this
+      // same month (same op id) rather than piling up redundant ops.
+      await DbService.addPendingOp(
+        'update_plan:$_year:$_month',
+        'update_plan',
+        {
+          'year': _year,
+          'month': _month,
+          'minimum_savings': minimumSavings,
+          'necessary_expenses_planned': necessaryExpensesPlanned,
+          'free_money_planned': freeMoneyPlanned,
+        },
+      );
+
+      // Update the cached copy optimistically so the change is reflected
+      // immediately without waiting for a sync.
+      final cached = await DbService.getCache(DataRefreshService.planKey(_year, _month));
+      if (cached != null) {
+        final plan = Map<String, dynamic>.from(cached.$1 as Map);
+        if (minimumSavings != null) plan['minimum_savings'] = minimumSavings;
+        plan['necessary_expenses_planned'] = necessaryExpensesPlanned;
+        plan['free_money_planned'] = freeMoneyPlanned;
+        await DbService.setCache(DataRefreshService.planKey(_year, _month), plan);
+      }
+
+      await _loadFromCache();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Plan saved.')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Plan saved locally - will sync soon.')));
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not save: $e')));

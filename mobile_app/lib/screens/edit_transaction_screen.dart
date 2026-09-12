@@ -1,19 +1,16 @@
 import 'package:flutter/material.dart';
 
-import '../config/app_config.dart';
 import '../models/transaction.dart';
-import '../services/api_client.dart';
 import '../services/db_service.dart';
 
-/// Editing/deleting an already-synced transaction requires connectivity -
-/// it goes straight to the API (PUT/DELETE), not through the offline
-/// /sync queue (which only supports creates in V1). A not-yet-synced
-/// transaction is only ever edited/deleted locally - it doesn't exist on
-/// the server yet, so there's nothing to call.
+/// Editing/deleting an already-synced transaction is queued (pending_ops),
+/// same rule as everywhere else - this screen never calls the API
+/// directly, only Sync Now / the hourly timer do. A not-yet-synced
+/// transaction is just changed locally with nothing to queue, since it
+/// doesn't exist on the server yet.
 class EditTransactionScreen extends StatefulWidget {
-  final AppConfig config;
   final LocalTransaction tx;
-  const EditTransactionScreen({super.key, required this.config, required this.tx});
+  const EditTransactionScreen({super.key, required this.tx});
 
   @override
   State<EditTransactionScreen> createState() => _EditTransactionScreenState();
@@ -27,8 +24,6 @@ class _EditTransactionScreenState extends State<EditTransactionScreen> {
 
   bool _saving = false;
   String? _error;
-
-  ApiClient get _api => ApiClient(widget.config);
 
   Future<void> _pickDate() async {
     // Kept within the transaction's original month: the row physically
@@ -74,12 +69,21 @@ class _EditTransactionScreenState extends State<EditTransactionScreen> {
 
     try {
       if (widget.tx.synced) {
-        await _api.updateTransaction(widget.tx.year, widget.tx.month, widget.tx.clientTransactionId, {
-          'date': _date.toIso8601String().substring(0, 10),
-          'subcategory': updated.subcategory,
-          'item': updated.item,
-          'amount': updated.amount,
-        });
+        await DbService.addPendingOp(
+          'update_transaction:${widget.tx.clientTransactionId}',
+          'update_transaction',
+          {
+            'year': widget.tx.year,
+            'month': widget.tx.month,
+            'id': widget.tx.clientTransactionId,
+            'fields': {
+              'date': _date.toIso8601String().substring(0, 10),
+              'subcategory': updated.subcategory,
+              'item': updated.item,
+              'amount': updated.amount,
+            },
+          },
+        );
       }
       await DbService.update(updated);
       if (!mounted) return;
@@ -112,7 +116,11 @@ class _EditTransactionScreenState extends State<EditTransactionScreen> {
     setState(() => _saving = true);
     try {
       if (widget.tx.synced) {
-        await _api.deleteTransaction(widget.tx.year, widget.tx.month, widget.tx.clientTransactionId);
+        await DbService.addPendingOp(
+          'delete_transaction:${widget.tx.clientTransactionId}',
+          'delete_transaction',
+          {'year': widget.tx.year, 'month': widget.tx.month, 'id': widget.tx.clientTransactionId},
+        );
       }
       await DbService.delete(widget.tx.clientTransactionId);
       if (!mounted) return;
@@ -193,7 +201,7 @@ class _EditTransactionScreenState extends State<EditTransactionScreen> {
             const SizedBox(height: 8),
             Text(
               widget.tx.synced
-                  ? 'This transaction is already synced - changes save immediately.'
+                  ? 'Already synced - this change is queued and will push on the next sync.'
                   : 'Not synced yet - changes are saved locally until the next sync.',
               style: Theme.of(context).textTheme.bodySmall,
             ),

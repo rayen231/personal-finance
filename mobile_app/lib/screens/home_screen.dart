@@ -105,13 +105,13 @@ class _HomeScreenState extends State<HomeScreen> {
       final now = DateTime.now();
       await DataRefreshService(api).refreshMonth(now.year, now.month);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(
-            outcome.failedCount == 0
-                ? 'Synced ${outcome.processedCount} transaction(s).'
-                : 'Synced ${outcome.processedCount}, ${outcome.failedCount} failed.',
-          ),
-        ));
+        final parts = <String>[
+          outcome.failedCount == 0
+              ? 'Synced ${outcome.processedCount} transaction(s).'
+              : 'Synced ${outcome.processedCount}, ${outcome.failedCount} failed.',
+          if (outcome.opFailures.isNotEmpty) '${outcome.opFailures.length} other change(s) failed.',
+        ];
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(parts.join(' '))));
       }
       await _reloadTabsFromCache();
     } catch (e) {
