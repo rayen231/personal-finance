@@ -111,6 +111,13 @@ class WorkbookRepository:
             content = self.storage.download(self._filename(year))
         return excel_service.load_workbook(content)
 
+    def workbook_exists(self, year: int) -> bool:
+        """Checks storage without lazily creating anything - used by callers
+        (e.g. recurring-value carry-forward) that need to look at an earlier
+        year but must never conjure a blank workbook into existence just by
+        looking at it."""
+        return self.storage.exists(self._filename(year))
+
     def get_setup(self, year: int) -> setup_service.SetupConfig:
         wb = self.open_for_read(year)
         return setup_service.read_setup_config(wb)

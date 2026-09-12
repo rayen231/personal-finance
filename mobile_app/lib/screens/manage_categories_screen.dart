@@ -6,10 +6,10 @@ import '../services/data_refresh_service.dart';
 import '../services/db_service.dart';
 
 const _listKinds = [
-  ('categories', 'expense_categories', 'Expense Categories'),
-  ('free-money-categories', 'free_money_categories', 'Free Money Categories'),
-  ('investment-areas', 'investment_areas', 'Investment Areas'),
-  ('income-sources', 'income_sources', 'Income Sources'),
+  ('categories', 'expense_categories', 'Expense Categories', false),
+  ('free-money-categories', 'free_money_categories', 'Free Money Categories', true),
+  ('investment-areas', 'investment_areas', 'Investment Areas', false),
+  ('income-sources', 'income_sources', 'Income Sources', true),
 ];
 
 /// All edits here are queued (pending_ops), same rule as the rest of the
@@ -173,6 +173,69 @@ class _ManageCategoriesScreenState extends State<ManageCategoriesScreen>
     await _loadFromCache();
   }
 
+  Map<String, dynamic> get _recurringFlags =>
+      (_setup?['recurring_flags'] as Map<String, dynamic>?) ??
+      {'income_sources': [], 'free_money_categories': [], 'subcategories': []};
+
+  bool _isIncomeSourceRecurring(String source) =>
+      (_recurringFlags['income_sources'] as List).contains(source);
+
+  bool _isFreeMoneyCategoryRecurring(String category) =>
+      (_recurringFlags['free_money_categories'] as List).contains(category);
+
+  bool _isSubcategoryRecurring(String category, String subcategory) =>
+      (_recurringFlags['subcategories'] as List).cast<Map<String, dynamic>>().any(
+            (p) => p['category'] == category && p['subcategory'] == subcategory,
+          );
+
+  Future<void> _setListValueRecurring(String listKind, String value, bool recurring) async {
+    final opType = listKind == 'income-sources'
+        ? 'set_income_source_recurring'
+        : 'set_free_money_category_recurring';
+    final key = listKind == 'income-sources' ? 'source' : 'category';
+    await DbService.addPendingOp(
+      '$opType:$value',
+      opType,
+      {'year': _year, key: value, 'recurring': recurring},
+    );
+    final setup = Map<String, dynamic>.from(_setup!);
+    final flags = Map<String, dynamic>.from(
+      (setup['recurring_flags'] as Map?) ?? {'income_sources': [], 'free_money_categories': [], 'subcategories': []},
+    );
+    final flagKey = listKind == 'income-sources' ? 'income_sources' : 'free_money_categories';
+    final items = List<String>.from((flags[flagKey] as List?) ?? []);
+    if (recurring) {
+      if (!items.contains(value)) items.add(value);
+    } else {
+      items.remove(value);
+    }
+    flags[flagKey] = items;
+    setup['recurring_flags'] = flags;
+    await DbService.setCache(DataRefreshService.setupKey(_year), setup);
+    await _loadFromCache();
+  }
+
+  Future<void> _setSubcategoryRecurring(String category, String subcategory, bool recurring) async {
+    await DbService.addPendingOp(
+      'set_subcategory_recurring:$category:$subcategory',
+      'set_subcategory_recurring',
+      {'year': _year, 'category': category, 'subcategory': subcategory, 'recurring': recurring},
+    );
+    final setup = Map<String, dynamic>.from(_setup!);
+    final flags = Map<String, dynamic>.from(
+      (setup['recurring_flags'] as Map?) ?? {'income_sources': [], 'free_money_categories': [], 'subcategories': []},
+    );
+    final items = List<Map<String, dynamic>>.from(
+      ((flags['subcategories'] as List?) ?? []).cast<Map<String, dynamic>>(),
+    );
+    items.removeWhere((p) => p['category'] == category && p['subcategory'] == subcategory);
+    if (recurring) items.add({'category': category, 'subcategory': subcategory});
+    flags['subcategories'] = items;
+    setup['recurring_flags'] = flags;
+    await DbService.setCache(DataRefreshService.setupKey(_year), setup);
+    await _loadFromCache();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -190,7 +253,7 @@ class _ManageCategoriesScreenState extends State<ManageCategoriesScreen>
           controller: _tabController,
           isScrollable: true,
           tabs: [
-            for (final (_, _, label) in _listKinds) Tab(text: label),
+            for (final (_, _, label, _) in _listKinds) Tab(text: label),
             const Tab(text: 'Subcategories'),
           ],
         ),
@@ -216,14 +279,14 @@ class _ManageCategoriesScreenState extends State<ManageCategoriesScreen>
               : TabBarView(
                   controller: _tabController,
                   children: [
-                    for (final (kind, jsonKey, _) in _listKinds) _buildListTab(kind, jsonKey),
+                    for (final (kind, jsonKey, _, recurs) in _listKinds) _buildListTab(kind, jsonKey, recurs),
                     _buildSubcategoriesTab(),
                   ],
                 ),
     );
   }
 
-  Widget _buildListTab(String listKind, String jsonKey) {
+  Widget _buildListTab(String listKind, String jsonKey, bool supportsRecurring) {
     final values = (_setup![jsonKey] as List).cast<String>();
 
     return Scaffold(
@@ -233,12 +296,28 @@ class _ManageCategoriesScreenState extends State<ManageCategoriesScreen>
         separatorBuilder: (_, _) => const Divider(height: 1, indent: 16, endIndent: 16),
         itemBuilder: (context, i) {
           final value = values[i];
+          final isRecurring = listKind == 'income-sources'
+              ? _isIncomeSourceRecurring(value)
+              : listKind == 'free-money-categories'
+                  ? _isFreeMoneyCategoryRecurring(value)
+                  : false;
           return ListTile(
             contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
             title: Text(value),
+            subtitle: supportsRecurring
+                ? Text(
+                    isRecurring ? 'Recurring - carries forward each month' : 'One-off - starts blank each month',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  )
+                : null,
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
+                if (supportsRecurring)
+                  Switch(
+                    value: isRecurring,
+                    onChanged: (v) => _setListValueRecurring(listKind, value, v),
+                  ),
                 IconButton(
                   icon: const Icon(Icons.edit, size: 20),
                   onPressed: () async {
@@ -287,9 +366,19 @@ class _ManageCategoriesScreenState extends State<ManageCategoriesScreen>
               ListTile(
                 contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
                 title: Text(sub),
+                subtitle: Text(
+                  _isSubcategoryRecurring(category, sub)
+                      ? 'Recurring - carries forward each month'
+                      : 'One-off - starts blank each month',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    Switch(
+                      value: _isSubcategoryRecurring(category, sub),
+                      onChanged: (v) => _setSubcategoryRecurring(category, sub, v),
+                    ),
                     IconButton(
                       icon: const Icon(Icons.edit, size: 20),
                       onPressed: () async {

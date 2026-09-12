@@ -186,6 +186,40 @@ class ApiClient {
     _checkOk(resp);
   }
 
+  /// Toggles whether an income source's "expected" figure carries forward
+  /// month to month (server-computed) instead of resetting to blank.
+  Future<void> setIncomeSourceRecurring(int year, String source, bool recurring) async {
+    final resp = await http.put(
+      _uri('/api/v1/setup/$year/recurring/income-sources/${Uri.encodeComponent(source)}'),
+      headers: _headers,
+      body: jsonEncode({'recurring': recurring}),
+    );
+    _checkOk(resp);
+  }
+
+  /// Same, for a Free Money category's planned amount.
+  Future<void> setFreeMoneyCategoryRecurring(int year, String category, bool recurring) async {
+    final resp = await http.put(
+      _uri('/api/v1/setup/$year/recurring/free-money-categories/${Uri.encodeComponent(category)}'),
+      headers: _headers,
+      body: jsonEncode({'recurring': recurring}),
+    );
+    _checkOk(resp);
+  }
+
+  /// Same, for a necessary-expense subcategory - carried forward locally by
+  /// the app (per-subcategory Plan detail never reaches the server).
+  Future<void> setSubcategoryRecurring(
+      int year, String category, String subcategory, bool recurring) async {
+    final resp = await http.put(
+      _uri(
+          '/api/v1/setup/$year/recurring/subcategories/${Uri.encodeComponent(category)}/${Uri.encodeComponent(subcategory)}'),
+      headers: _headers,
+      body: jsonEncode({'recurring': recurring}),
+    );
+    _checkOk(resp);
+  }
+
   Future<SyncResult> sync(List<LocalTransaction> pending, {String clientId = 'flutter-app'}) async {
     final body = jsonEncode({
       'client_id': clientId,

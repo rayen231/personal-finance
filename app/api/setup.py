@@ -3,7 +3,14 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.deps import get_setup_service, require_api_key
-from app.models.setup import ListValuePayload, SetupOut, SubcategoryCreate, SubcategoryOut, SubcategoryRename
+from app.models.setup import (
+    ListValuePayload,
+    RecurringFlagPayload,
+    SetupOut,
+    SubcategoryCreate,
+    SubcategoryOut,
+    SubcategoryRename,
+)
 from app.services import excel_service
 from app.services.setup_api_service import SetupApiService
 
@@ -130,3 +137,36 @@ def delete_list_value(
     year: int, list_kind: ListKind, value: str, service: SetupApiService = Depends(get_setup_service)
 ):
     _handle_label_errors(service.delete_list_value, year, list_kind, value)
+
+
+# --- Recurring flags: whether an item's value carries forward month to
+# month, or resets to blank/zero for manual entry -------------------------
+
+@router.put("/{year}/recurring/income-sources/{source}", status_code=status.HTTP_204_NO_CONTENT)
+def set_income_source_recurring(
+    year: int, source: str, payload: RecurringFlagPayload, service: SetupApiService = Depends(get_setup_service)
+):
+    service.set_income_source_recurring(year, source, payload.recurring)
+
+
+@router.put("/{year}/recurring/free-money-categories/{category}", status_code=status.HTTP_204_NO_CONTENT)
+def set_free_money_category_recurring(
+    year: int,
+    category: str,
+    payload: RecurringFlagPayload,
+    service: SetupApiService = Depends(get_setup_service),
+):
+    service.set_free_money_category_recurring(year, category, payload.recurring)
+
+
+@router.put(
+    "/{year}/recurring/subcategories/{category}/{subcategory}", status_code=status.HTTP_204_NO_CONTENT
+)
+def set_subcategory_recurring(
+    year: int,
+    category: str,
+    subcategory: str,
+    payload: RecurringFlagPayload,
+    service: SetupApiService = Depends(get_setup_service),
+):
+    service.set_subcategory_recurring(year, category, subcategory, payload.recurring)

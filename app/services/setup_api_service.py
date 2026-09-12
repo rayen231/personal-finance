@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from app.models.setup import RecurringExpenseOut, SetupOut, SubcategoryOut
+from app.models.setup import RecurringExpenseOut, RecurringFlagsOut, SetupOut, SubcategoryOut
 from app.services import setup_service
+from app.services.recurring_flags import RecurringFlagsStore
 from app.services.workbook_repository import WorkbookRepository
 
 # Maps the API's list-kind names to the SETUP table they actually live in.
@@ -14,13 +15,15 @@ _LIST_TABLES = {
 
 
 class SetupApiService:
-    def __init__(self, repo: WorkbookRepository):
+    def __init__(self, repo: WorkbookRepository, recurring_flags: RecurringFlagsStore):
         self.repo = repo
+        self.recurring_flags = recurring_flags
 
     def get_setup(self, year: int) -> SetupOut:
         wb = self.repo.open_for_read(year)
         config = setup_service.read_setup_config(wb)
         recurring = setup_service.read_recurring_expenses(wb)
+        flags = self.recurring_flags.get(year)
         return SetupOut(
             income_sources=config.income_sources,
             expense_categories=config.expense_categories,
@@ -29,7 +32,21 @@ class SetupApiService:
             investment_areas=config.investment_areas,
             classifications=config.classifications,
             recurring_expenses=[RecurringExpenseOut(**r) for r in recurring],
+            recurring_flags=RecurringFlagsOut(
+                income_sources=flags["income_sources"],
+                free_money_categories=flags["free_money_categories"],
+                subcategories=[SubcategoryOut(**s) for s in flags["subcategories"]],
+            ),
         )
+
+    def set_income_source_recurring(self, year: int, source: str, recurring: bool) -> None:
+        self.recurring_flags.set_income_source(year, source, recurring)
+
+    def set_free_money_category_recurring(self, year: int, category: str, recurring: bool) -> None:
+        self.recurring_flags.set_free_money_category(year, category, recurring)
+
+    def set_subcategory_recurring(self, year: int, category: str, subcategory: str, recurring: bool) -> None:
+        self.recurring_flags.set_subcategory(year, category, subcategory, recurring)
 
     def add_list_value(self, year: int, list_kind: str, value: str) -> str:
         table_name = _LIST_TABLES[list_kind]

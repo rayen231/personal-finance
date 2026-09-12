@@ -15,25 +15,63 @@ from app.models.income import IncomeSourceOut, IncomeUpdate
 from app.models.plan import PlanOut, PlanUpdate
 from app.models.summary import FreeMoneySummary, IncomeSummary, MonthlySummary
 from app.services import excel_service
+from app.services.recurring_flags import RecurringFlagsStore
 from app.services.workbook_repository import WorkbookRepository
+
+# How many months back to look, at most, when carrying a recurring value
+# forward - a safety cap, not something normal use should ever approach.
+_MAX_CARRY_FORWARD_LOOKBACK = 60
 
 
 class PlanningService:
-    def __init__(self, repo: WorkbookRepository):
+    def __init__(self, repo: WorkbookRepository, recurring_flags: RecurringFlagsStore):
         self.repo = repo
+        self.recurring_flags = recurring_flags
+
+    def _previous_month(self, year: int, month: int) -> tuple[int, int]:
+        return (year - 1, 12) if month == 1 else (year, month - 1)
+
+    def _carry_forward(self, year: int, month: int, extractor) -> float:
+        """Walks backward from (year, month) - excluding it - until it finds
+        a month that was actually touched ("Active"/etc., not "Not Started"),
+        and returns `extractor(ws)` from that month. Stops (returns 0) if it
+        runs off the start of recorded history or hits the lookback cap,
+        without ever creating a workbook for a year that doesn't exist yet."""
+        y, m = year, month
+        for _ in range(_MAX_CARRY_FORWARD_LOOKBACK):
+            y, m = self._previous_month(y, m)
+            if not self.repo.workbook_exists(y):
+                return 0.0
+            ws = self.repo.open_for_read(y)[excel_service.month_name(m)]
+            if excel_service.get_month_status(ws) != "Not Started":
+                return extractor(ws)
+        return 0.0
 
     def list_income(self, year: int, month: int) -> list[IncomeSourceOut]:
         ws = self.repo.open_for_read(year)[excel_service.month_name(month)]
         rows = excel_service.read_income(ws)
-        return [
-            IncomeSourceOut(
-                source=r["source"],
-                expected=r["expected"],
-                actual=r["actual"],
-                difference=r["actual"] - r["expected"],
+        recurring_sources = self.recurring_flags.get(year)["income_sources"]
+        results = []
+        for r in rows:
+            expected = r["expected"]
+            # A blank/zero "expected" on a recurring source means the month
+            # hasn't been given its own figure yet - carry the last actually
+            # entered one forward rather than showing 0. Changing a month's
+            # own value only ever affects months *after* it, since this only
+            # ever looks backward from the current month.
+            if expected == 0 and r["source"] in recurring_sources:
+                expected = self._carry_forward(
+                    year, month, lambda ws, s=r["source"]: excel_service.read_income_expected(ws, s)
+                )
+            results.append(
+                IncomeSourceOut(
+                    source=r["source"],
+                    expected=expected,
+                    actual=r["actual"],
+                    difference=r["actual"] - expected,
+                )
             )
-            for r in rows
-        ]
+        return results
 
     def update_income(self, year: int, month: int, source: str, payload: IncomeUpdate) -> IncomeSourceOut:
         month_name = excel_service.month_name(month)
@@ -51,10 +89,17 @@ class PlanningService:
 
     def get_plan(self, year: int, month: int) -> PlanOut:
         ws = self.repo.open_for_read(year)[excel_service.month_name(month)]
+        free_money_planned = excel_service.read_free_money_planned(ws)
+        recurring_categories = self.recurring_flags.get(year)["free_money_categories"]
+        for category, amount in free_money_planned.items():
+            if amount == 0 and category in recurring_categories:
+                free_money_planned[category] = self._carry_forward(
+                    year, month, lambda ws, c=category: excel_service.read_free_money_planned(ws).get(c, 0.0)
+                )
         return PlanOut(
             minimum_savings=excel_service.read_minimum_savings(ws),
             necessary_expenses_planned=excel_service.read_necessary_expense_planned(ws),
-            free_money_planned=excel_service.read_free_money_planned(ws),
+            free_money_planned=free_money_planned,
             investments_planned_total=excel_service.read_planned_investments_total(ws),
         )
 

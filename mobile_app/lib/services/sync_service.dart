@@ -91,6 +91,18 @@ class SyncService {
         );
       case 'delete_transaction':
         await api.deleteTransaction(p['year'] as int, p['month'] as int, p['id'] as String);
+      case 'set_income_source_recurring':
+        await api.setIncomeSourceRecurring(p['year'] as int, p['source'] as String, p['recurring'] as bool);
+      case 'set_free_money_category_recurring':
+        await api.setFreeMoneyCategoryRecurring(
+            p['year'] as int, p['category'] as String, p['recurring'] as bool);
+      case 'set_subcategory_recurring':
+        await api.setSubcategoryRecurring(
+          p['year'] as int,
+          p['category'] as String,
+          p['subcategory'] as String,
+          p['recurring'] as bool,
+        );
       default:
         throw StateError('Unknown pending op type: $type');
     }

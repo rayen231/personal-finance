@@ -36,10 +36,41 @@ class _PlanScreenState extends State<PlanScreen> {
 
   static String _detailKey(int year, int month) => 'plan_subcat_detail:$year:$month';
 
+  static const _maxCarryForwardLookback = 24;
+
   @override
   void initState() {
     super.initState();
     _loadFromCache();
+  }
+
+  (int, int) _previousMonth(int year, int month) => month == 1 ? (year - 1, 12) : (year, month - 1);
+
+  /// Looks back through previously-saved months' local subcategory detail
+  /// (never sent to the server - it's a local-only breakdown of the
+  /// server's per-category total) for the nearest value of each recurring
+  /// subcategory. Only used the first time a month is opened locally (no
+  /// detail cached for it yet) - editing a month later never reaches back
+  /// into earlier months.
+  Future<Map<String, double>> _carryForwardSubcategoryAmounts(Set<String> recurringKeys) async {
+    final result = <String, double>{};
+    var y = _year;
+    var m = _month;
+    for (var i = 0; i < _maxCarryForwardLookback && result.length < recurringKeys.length; i++) {
+      (y, m) = _previousMonth(y, m);
+      final cached = await DbService.getCache(_detailKey(y, m));
+      if (cached == null) continue;
+      final detail = (cached.$1 as Map<String, dynamic>);
+      detail.forEach((category, subs) {
+        (subs as Map<String, dynamic>).forEach((sub, amount) {
+          final key = '$category|$sub';
+          if (recurringKeys.contains(key) && !result.containsKey(key)) {
+            result[key] = (amount as num).toDouble();
+          }
+        });
+      });
+    }
+    return result;
   }
 
   Future<void> _loadFromCache() async {
@@ -73,6 +104,14 @@ class _PlanScreenState extends State<PlanScreen> {
             .add(pair['subcategory'] as String);
       }
 
+      final recurringSubKeys = <String>{
+        for (final p in ((setup['recurring_flags'] as Map?)?['subcategories'] as List? ?? []))
+          '${p['category']}|${p['subcategory']}',
+      };
+      final carried = detailCached == null && recurringSubKeys.isNotEmpty
+          ? await _carryForwardSubcategoryAmounts(recurringSubKeys)
+          : <String, double>{};
+
       _necessaryDetail.clear();
       final necessary = (plan['necessary_expenses_planned'] as Map).cast<String, dynamic>();
       necessary.forEach((category, total) {
@@ -87,7 +126,13 @@ class _PlanScreenState extends State<PlanScreen> {
         } else {
           _necessaryDetail[category] = [
             for (final sub in subs)
-              (sub, TextEditingController(text: ((categoryDetail[sub] as num?) ?? 0).toStringAsFixed(2)))
+              (
+                sub,
+                TextEditingController(
+                  text: ((categoryDetail[sub] as num?)?.toDouble() ?? carried['$category|$sub'] ?? 0)
+                      .toStringAsFixed(2),
+                )
+              )
           ];
         }
       });

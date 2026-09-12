@@ -3,6 +3,7 @@ from fastapi import Depends, Header, HTTPException, status
 from app.config import Settings, get_settings
 from app.services.finance_service import FinanceService
 from app.services.planning_service import PlanningService
+from app.services.recurring_flags import RecurringFlagsStore
 from app.services.setup_api_service import SetupApiService
 from app.services.storage_service import get_storage_service
 from app.services.sync_state import SyncStateStore
@@ -27,9 +28,19 @@ def get_finance_service(repo: WorkbookRepository = Depends(get_repo)) -> Finance
     return FinanceService(repo)
 
 
-def get_planning_service(repo: WorkbookRepository = Depends(get_repo)) -> PlanningService:
-    return PlanningService(repo)
+def get_recurring_flags(settings: Settings = Depends(get_settings)) -> RecurringFlagsStore:
+    return RecurringFlagsStore(get_storage_service(settings))
 
 
-def get_setup_service(repo: WorkbookRepository = Depends(get_repo)) -> SetupApiService:
-    return SetupApiService(repo)
+def get_planning_service(
+    repo: WorkbookRepository = Depends(get_repo),
+    recurring_flags: RecurringFlagsStore = Depends(get_recurring_flags),
+) -> PlanningService:
+    return PlanningService(repo, recurring_flags)
+
+
+def get_setup_service(
+    repo: WorkbookRepository = Depends(get_repo),
+    recurring_flags: RecurringFlagsStore = Depends(get_recurring_flags),
+) -> SetupApiService:
+    return SetupApiService(repo, recurring_flags)

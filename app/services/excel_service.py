@@ -246,6 +246,18 @@ def read_income(ws: Worksheet) -> list[dict]:
     return results
 
 
+def read_income_expected(ws: Worksheet, source: str) -> float:
+    """Single-source lookup used by recurring-value carry-forward - returns
+    0 rather than raising if this month's sheet doesn't have that source as
+    a row (e.g. it was added to SETUP after this month's template was laid
+    down)."""
+    try:
+        row = _find_label_row(ws, INCOME_ROWS, INCOME_LABEL_COL, source)
+    except LabelNotFoundError:
+        return 0.0
+    return _numeric_or_none(ws.cell(row=row, column=INCOME_EXPECTED_COL).value) or 0.0
+
+
 def write_income(ws: Worksheet, source: str, *, expected: Optional[float] = None, actual: Optional[float] = None) -> None:
     row = _find_label_row(ws, INCOME_ROWS, INCOME_LABEL_COL, source)
     if expected is not None:
