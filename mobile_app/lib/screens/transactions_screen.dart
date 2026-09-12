@@ -6,6 +6,7 @@ import '../models/transaction.dart';
 import '../services/api_client.dart';
 import '../services/data_refresh_service.dart';
 import '../services/db_service.dart';
+import '../services/sync_service.dart';
 import '../utils/type_style.dart';
 import '../widgets/month_selector.dart';
 import 'edit_transaction_screen.dart';
@@ -45,10 +46,17 @@ class TransactionsScreenState extends State<TransactionsScreen> {
     });
   }
 
+  // Also pushes queued edit/delete pending ops first (see
+  // income_screen.dart's _refreshFromServer) - importing transactions
+  // itself is additive-only (insertOrIgnore) so it's already safe, but an
+  // edit or delete queued from this screen would otherwise sit stuck
+  // forever if the user only ever pulls-to-refresh here.
   Future<void> _refreshFromServer() async {
     setState(() => _refreshing = true);
     try {
-      await DataRefreshService(ApiClient(widget.config)).importTransactionsOnly(_year, _month);
+      final api = ApiClient(widget.config);
+      await SyncService(api).processPendingOps();
+      await DataRefreshService(api).importTransactionsOnly(_year, _month);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Refresh failed: $e')));

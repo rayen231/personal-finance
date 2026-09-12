@@ -86,7 +86,7 @@ class ApiClient {
   Future<void> updateIncome(int year, int month, String source,
       {double? expected, double? actual}) async {
     final resp = await http.put(
-      _uri('/api/v1/months/$year/$month/income/$source'),
+      _uri('/api/v1/months/$year/$month/income/${Uri.encodeComponent(source)}'),
       headers: _headers,
       body: jsonEncode({
         'expected': ?expected,

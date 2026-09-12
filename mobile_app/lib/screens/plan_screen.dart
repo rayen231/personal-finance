@@ -4,6 +4,7 @@ import '../config/app_config.dart';
 import '../services/api_client.dart';
 import '../services/data_refresh_service.dart';
 import '../services/db_service.dart';
+import '../services/sync_service.dart';
 import '../widgets/month_selector.dart';
 
 class PlanScreen extends StatefulWidget {
@@ -157,9 +158,13 @@ class _PlanScreenState extends State<PlanScreen> {
     }
   }
 
+  // Pulling down must never silently discard local edits that haven't
+  // reached the server yet - see income_screen.dart's _refreshFromServer
+  // for the full rationale.
   Future<void> _refreshFromServer() async {
     setState(() => _saving = true);
     try {
+      await SyncService(_api).processPendingOps();
       final setup = await _api.getSetup(_year);
       await DbService.setCache(DataRefreshService.setupKey(_year), setup);
       final plan = await _api.getPlan(_year, _month);

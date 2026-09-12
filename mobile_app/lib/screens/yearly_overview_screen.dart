@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../config/app_config.dart';
 import '../services/api_client.dart';
+import '../services/sync_service.dart';
 
 const _monthAbbrev = [
   'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
@@ -36,6 +37,10 @@ class _YearlyOverviewScreenState extends State<YearlyOverviewScreen> {
     });
     try {
       final api = ApiClient(widget.config);
+      // Push any queued local edits first so this overview reflects them,
+      // rather than the stale pre-edit server state - see
+      // income_screen.dart's _refreshFromServer for the full rationale.
+      await SyncService(api).processPendingOps();
       // Only fetch through the current month - future months are
       // "Not Started" and would just be zeros anyway.
       final upTo = DateTime.now().year == _year ? DateTime.now().month : 12;

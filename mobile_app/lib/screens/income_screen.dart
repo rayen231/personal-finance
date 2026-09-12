@@ -4,6 +4,7 @@ import '../config/app_config.dart';
 import '../services/api_client.dart';
 import '../services/data_refresh_service.dart';
 import '../services/db_service.dart';
+import '../services/sync_service.dart';
 import '../widgets/month_selector.dart';
 
 class IncomeScreen extends StatefulWidget {
@@ -41,9 +42,16 @@ class _IncomeScreenState extends State<IncomeScreen> {
     });
   }
 
+  /// Pulling down must never silently discard local edits that haven't
+  /// reached the server yet - it pushes any queued pending ops first (same
+  /// as Sync Now), then fetches the fresh server state. Fetching first
+  /// would overwrite the optimistic local values with stale server data
+  /// before they'd ever been sent, making entered-but-unsynced income look
+  /// like it "disappeared".
   Future<void> _refreshFromServer() async {
     setState(() => _refreshing = true);
     try {
+      await SyncService(_api).processPendingOps();
       final data = await _api.getIncome(_year, _month);
       await DbService.setCache(DataRefreshService.incomeKey(_year, _month), data);
     } catch (e) {

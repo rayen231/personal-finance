@@ -4,6 +4,7 @@ import '../config/app_config.dart';
 import '../services/api_client.dart';
 import '../services/data_refresh_service.dart';
 import '../services/db_service.dart';
+import '../services/sync_service.dart';
 
 const _listKinds = [
   ('categories', 'expense_categories', 'Expense Categories', false),
@@ -49,10 +50,15 @@ class _ManageCategoriesScreenState extends State<ManageCategoriesScreen>
     });
   }
 
+  // Pulling down must never silently discard local edits that haven't
+  // reached the server yet - see income_screen.dart's _refreshFromServer
+  // for the full rationale.
   Future<void> _refreshFromServer() async {
     setState(() => _refreshing = true);
     try {
-      final setup = await ApiClient(widget.config).getSetup(_year);
+      final api = ApiClient(widget.config);
+      await SyncService(api).processPendingOps();
+      final setup = await api.getSetup(_year);
       await DbService.setCache(DataRefreshService.setupKey(_year), setup);
     } catch (e) {
       if (mounted) {
