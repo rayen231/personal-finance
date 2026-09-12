@@ -60,9 +60,28 @@ class DbService {
     await db.insert('transactions', tx.toDbMap());
   }
 
+  /// Used when importing transactions that already exist server-side (e.g.
+  /// entered directly in Excel, or from another device) - ignores rows
+  /// whose id we already have locally instead of overwriting local edits.
+  static Future<void> insertOrIgnore(LocalTransaction tx) async {
+    final db = await _open();
+    await db.insert('transactions', tx.toDbMap(), conflictAlgorithm: ConflictAlgorithm.ignore);
+  }
+
   static Future<List<LocalTransaction>> listAll() async {
     final db = await _open();
     final rows = await db.query('transactions', orderBy: 'date DESC, rowid DESC');
+    return rows.map(LocalTransaction.fromDbMap).toList();
+  }
+
+  static Future<List<LocalTransaction>> listForMonth(int year, int month) async {
+    final db = await _open();
+    final rows = await db.query(
+      'transactions',
+      where: 'year = ? AND month = ?',
+      whereArgs: [year, month],
+      orderBy: 'date DESC, rowid DESC',
+    );
     return rows.map(LocalTransaction.fromDbMap).toList();
   }
 

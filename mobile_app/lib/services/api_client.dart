@@ -57,10 +57,24 @@ class ApiClient {
   }
 
   Future<List<dynamic>> getTransactions(int year, int month) async {
-    final resp =
-        await http.get(_uri('/api/v1/months/$year/$month/transactions'), headers: _headers);
+    final resp = await http.get(
+      _uri('/api/v1/months/$year/$month/transactions?limit=200'),
+      headers: _headers,
+    );
     _checkOk(resp);
     return jsonDecode(resp.body) as List<dynamic>;
+  }
+
+  /// Registers a new (category, subcategory) pair in SETUP. Idempotent on
+  /// the server if it already exists. Used when a category has no
+  /// subcategories yet (e.g. "Other") so the user isn't stuck.
+  Future<void> addSubcategory(int year, String category, String subcategory) async {
+    final resp = await http.post(
+      _uri('/api/v1/setup/$year/subcategories'),
+      headers: _headers,
+      body: jsonEncode({'category': category, 'subcategory': subcategory}),
+    );
+    _checkOk(resp);
   }
 
   Future<SyncResult> sync(List<LocalTransaction> pending, {String clientId = 'flutter-app'}) async {

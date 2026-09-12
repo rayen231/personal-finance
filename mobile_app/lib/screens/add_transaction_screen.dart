@@ -5,6 +5,7 @@ import '../config/app_config.dart';
 import '../models/transaction.dart';
 import '../services/api_client.dart';
 import '../services/db_service.dart';
+import '../utils/type_style.dart';
 
 const _types = ['Expense', 'Free Money', 'Investment'];
 
@@ -78,38 +79,66 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
         .toList();
   }
 
-  bool get _subcategoryIsFreeText => _type != 'Expense';
+  // Free-text entry for non-Expense types (per the API's own validation
+  // rules), OR for an Expense category that has no subcategories defined
+  // yet (e.g. "Other") - otherwise the user would hit a dead end.
+  bool get _subcategoryIsFreeText => _type != 'Expense' || _subcategoryOptions.isEmpty;
 
   Future<void> _save() async {
     final amount = double.tryParse(_amountController.text);
-    final subcategory = _subcategoryIsFreeText ? _subcategoryTextController.text.trim() : _subcategory;
+    final subcategory =
+        _subcategoryIsFreeText ? _subcategoryTextController.text.trim() : _subcategory;
 
-    if (_category == null || subcategory == null || subcategory.isEmpty || _itemController.text.trim().isEmpty) {
+    if (_category == null ||
+        subcategory == null ||
+        subcategory.isEmpty ||
+        _itemController.text.trim().isEmpty) {
       setState(() => _error = 'Category, subcategory and item are required.');
       return;
     }
-    if (amount == null || amount <= 0) {
+    final amountValue = amount;
+    if (amountValue == null || amountValue <= 0) {
       setState(() => _error = 'Amount must be a positive number.');
       return;
     }
 
-    setState(() => _saving = true);
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
 
-    final tx = LocalTransaction(
-      clientTransactionId: const Uuid().v4(),
-      year: _date.year,
-      month: _date.month,
-      date: _date,
-      type: _type,
-      category: _category!,
-      subcategory: subcategory,
-      item: _itemController.text.trim(),
-      amount: amount,
-    );
+    try {
+      // A typed-in subcategory for an Expense type must exist in SETUP
+      // before a transaction using it can ever sync - register it now if
+      // it's new, so the user doesn't discover the failure later at sync
+      // time.
+      final isNewExpenseSubcategory =
+          _type == 'Expense' && !_subcategoryOptions.contains(subcategory);
+      if (isNewExpenseSubcategory) {
+        await ApiClient(widget.config).addSubcategory(_date.year, _category!, subcategory);
+      }
 
-    await DbService.insert(tx);
-    if (!mounted) return;
-    Navigator.of(context).pop(true);
+      final tx = LocalTransaction(
+        clientTransactionId: const Uuid().v4(),
+        year: _date.year,
+        month: _date.month,
+        date: _date,
+        type: _type,
+        category: _category!,
+        subcategory: subcategory,
+        item: _itemController.text.trim(),
+        amount: amountValue,
+      );
+
+      await DbService.insert(tx);
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+    } catch (e) {
+      setState(() {
+        _error = 'Could not save: $e';
+        _saving = false;
+      });
+    }
   }
 
   Future<void> _pickDate() async {
@@ -133,69 +162,112 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
 
     return Scaffold(
       appBar: AppBar(title: const Text('Add Transaction')),
-      body: Padding(
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
-        child: ListView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            if (_error != null) ...[
-              Text(_error!, style: const TextStyle(color: Colors.red)),
-              const SizedBox(height: 12),
-            ],
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Date'),
-              subtitle: Text('${_date.year}-${_date.month.toString().padLeft(2, '0')}-${_date.day.toString().padLeft(2, '0')}'),
-              trailing: const Icon(Icons.calendar_today),
-              onTap: _pickDate,
-            ),
-            DropdownButtonFormField<String>(
-              initialValue: _type,
-              decoration: const InputDecoration(labelText: 'Type'),
-              items: _types.map((t) => DropdownMenuItem(value: t, child: Text(t))).toList(),
-              onChanged: (v) => setState(() {
-                _type = v!;
-                _category = null;
-                _subcategory = null;
-              }),
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              initialValue: _category,
-              decoration: const InputDecoration(labelText: 'Category'),
-              items: _categoryOptions.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
-              onChanged: (v) => setState(() {
-                _category = v;
-                _subcategory = null;
-              }),
-            ),
-            const SizedBox(height: 12),
-            if (_subcategoryIsFreeText)
-              TextField(
-                controller: _subcategoryTextController,
-                decoration: const InputDecoration(labelText: 'Subcategory'),
-              )
-            else
-              DropdownButtonFormField<String>(
-                initialValue: _subcategory,
-                decoration: const InputDecoration(labelText: 'Subcategory'),
-                items: _subcategoryOptions.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
-                onChanged: (v) => setState(() => _subcategory = v),
+            if (_error != null)
+              Card(
+                color: Theme.of(context).colorScheme.errorContainer,
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Text(_error!,
+                      style: TextStyle(color: Theme.of(context).colorScheme.onErrorContainer)),
+                ),
               ),
             const SizedBox(height: 12),
-            TextField(
-              controller: _itemController,
-              decoration: const InputDecoration(labelText: 'Item / Description'),
+
+            // Type selector as colored segmented chips.
+            Wrap(
+              spacing: 8,
+              children: _types.map((t) {
+                final selected = t == _type;
+                return ChoiceChip(
+                  label: Text(t),
+                  avatar: Icon(TypeStyle.icon(t),
+                      size: 18, color: selected ? Colors.white : TypeStyle.color(t)),
+                  selected: selected,
+                  selectedColor: TypeStyle.color(t),
+                  labelStyle: TextStyle(color: selected ? Colors.white : null),
+                  onSelected: (_) => setState(() {
+                    _type = t;
+                    _category = null;
+                    _subcategory = null;
+                  }),
+                );
+              }).toList(),
             ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _amountController,
-              decoration: const InputDecoration(labelText: 'Amount'),
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            const SizedBox(height: 16),
+
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.calendar_today),
+                      title: const Text('Date'),
+                      subtitle: Text(
+                          '${_date.year}-${_date.month.toString().padLeft(2, '0')}-${_date.day.toString().padLeft(2, '0')}'),
+                      onTap: _pickDate,
+                    ),
+                    const Divider(),
+                    DropdownButtonFormField<String>(
+                      initialValue: _category,
+                      decoration: const InputDecoration(labelText: 'Category'),
+                      items: _categoryOptions
+                          .map((c) => DropdownMenuItem(value: c, child: Text(c)))
+                          .toList(),
+                      onChanged: (v) => setState(() {
+                        _category = v;
+                        _subcategory = null;
+                      }),
+                    ),
+                    const SizedBox(height: 12),
+                    if (_subcategoryIsFreeText)
+                      TextField(
+                        controller: _subcategoryTextController,
+                        decoration: InputDecoration(
+                          labelText: 'Subcategory',
+                          helperText: _type == 'Expense' && _category != null
+                              ? 'No subcategories set up yet for "$_category" - this will add one.'
+                              : null,
+                        ),
+                      )
+                    else
+                      DropdownButtonFormField<String>(
+                        initialValue: _subcategory,
+                        decoration: const InputDecoration(labelText: 'Subcategory'),
+                        items: _subcategoryOptions
+                            .map((s) => DropdownMenuItem(value: s, child: Text(s)))
+                            .toList(),
+                        onChanged: (v) => setState(() => _subcategory = v),
+                      ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _itemController,
+                      decoration: const InputDecoration(labelText: 'Item / Description'),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _amountController,
+                      decoration: const InputDecoration(labelText: 'Amount', suffixText: 'DT'),
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    ),
+                  ],
+                ),
+              ),
             ),
             const SizedBox(height: 24),
-            FilledButton(
+            FilledButton.icon(
               onPressed: _saving ? null : _save,
-              child: const Text('Save'),
+              icon: _saving
+                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.check),
+              label: const Text('Save'),
             ),
           ],
         ),

@@ -3,13 +3,15 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../config/app_config.dart';
-import '../models/transaction.dart';
 import '../services/api_client.dart';
-import '../services/db_service.dart';
 import '../services/sync_service.dart';
 import 'add_transaction_screen.dart';
+import 'dashboard_screen.dart';
 import 'settings_screen.dart';
+import 'transactions_screen.dart';
 
+/// Top-level shell: bottom nav between Dashboard and Transactions, with
+/// Sync Now / Settings in the app bar and an Add Transaction FAB.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -19,10 +21,12 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   AppConfig? _config;
-  List<LocalTransaction> _transactions = [];
+  int _tabIndex = 0;
   bool _syncing = false;
-  String? _syncMessage;
   Timer? _hourlyTimer;
+
+  final _dashboardKey = GlobalKey<DashboardScreenState>();
+  final _transactionsKey = GlobalKey<TransactionsScreenState>();
 
   @override
   void initState() {
@@ -42,7 +46,6 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!config.isConfigured) {
       await _openSettings();
     }
-    await _refresh();
 
     // Best-effort "roughly hourly" sync while the app is open. Real
     // background sync (app closed/killed) would need platform-specific
@@ -50,9 +53,9 @@ class _HomeScreenState extends State<HomeScreen> {
     _hourlyTimer = Timer.periodic(const Duration(hours: 1), (_) => _sync());
   }
 
-  Future<void> _refresh() async {
-    final txs = await DbService.listAll();
-    setState(() => _transactions = txs);
+  Future<void> _refreshTabs() async {
+    await _dashboardKey.currentState?.refresh();
+    await _transactionsKey.currentState?.refresh();
   }
 
   Future<void> _openSettings() async {
@@ -61,9 +64,9 @@ class _HomeScreenState extends State<HomeScreen> {
       MaterialPageRoute(builder: (_) => SettingsScreen(config: _config!)),
     );
     if (changed == true) {
-      setState(() => _config = null);
       final config = await AppConfig.load();
       setState(() => _config = config);
+      await _refreshTabs();
     }
   }
 
@@ -73,29 +76,31 @@ class _HomeScreenState extends State<HomeScreen> {
       MaterialPageRoute(builder: (_) => AddTransactionScreen(config: _config!)),
     );
     if (added == true) {
-      await _refresh();
+      await _refreshTabs();
     }
   }
 
   Future<void> _sync() async {
     if (_config == null || !_config!.isConfigured) return;
-    setState(() {
-      _syncing = true;
-      _syncMessage = null;
-    });
+    setState(() => _syncing = true);
     try {
       final outcome = await SyncService(ApiClient(_config!)).syncPending();
-      setState(() {
-        _syncMessage = outcome.failedCount == 0
-            ? 'Synced ${outcome.processedCount} transaction(s).'
-            : 'Synced ${outcome.processedCount}, ${outcome.failedCount} failed: '
-                '${outcome.failures.map((f) => f['reason']).join('; ')}';
-      });
-      await _refresh();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(
+            outcome.failedCount == 0
+                ? 'Synced ${outcome.processedCount} transaction(s).'
+                : 'Synced ${outcome.processedCount}, ${outcome.failedCount} failed.',
+          ),
+        ));
+      }
+      await _refreshTabs();
     } catch (e) {
-      setState(() => _syncMessage = 'Sync failed: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Sync failed: $e')));
+      }
     } finally {
-      setState(() => _syncing = false);
+      if (mounted) setState(() => _syncing = false);
     }
   }
 
@@ -105,68 +110,41 @@ class _HomeScreenState extends State<HomeScreen> {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
-    final unsyncedCount = _transactions.where((t) => !t.synced).length;
+    final titles = ['Dashboard', 'Transactions'];
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Money Handler'),
+        title: Text(titles[_tabIndex]),
         actions: [
+          IconButton(
+            icon: _syncing
+                ? const SizedBox(
+                    width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.sync),
+            tooltip: 'Sync Now',
+            onPressed: _syncing ? null : _sync,
+          ),
           IconButton(icon: const Icon(Icons.settings), onPressed: _openSettings),
         ],
       ),
-      body: Column(
+      body: IndexedStack(
+        index: _tabIndex,
         children: [
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    unsyncedCount == 0
-                        ? 'All synced'
-                        : '$unsyncedCount transaction(s) pending sync',
-                  ),
-                ),
-                FilledButton.icon(
-                  onPressed: _syncing ? null : _sync,
-                  icon: _syncing
-                      ? const SizedBox(
-                          width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                      : const Icon(Icons.sync),
-                  label: const Text('Sync Now'),
-                ),
-              ],
-            ),
-          ),
-          if (_syncMessage != null)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Text(_syncMessage!, style: Theme.of(context).textTheme.bodySmall),
-            ),
-          const Divider(height: 1),
-          Expanded(
-            child: _transactions.isEmpty
-                ? const Center(child: Text('No transactions yet. Tap + to add one.'))
-                : ListView.builder(
-                    itemCount: _transactions.length,
-                    itemBuilder: (context, i) {
-                      final tx = _transactions[i];
-                      return ListTile(
-                        leading: Icon(tx.synced ? Icons.cloud_done : Icons.cloud_upload_outlined),
-                        title: Text('${tx.category} / ${tx.subcategory} - ${tx.item}'),
-                        subtitle: Text(
-                          '${tx.type} - ${tx.date.toIso8601String().substring(0, 10)}',
-                        ),
-                        trailing: Text('${tx.amount.toStringAsFixed(2)} DT'),
-                      );
-                    },
-                  ),
-          ),
+          DashboardScreen(key: _dashboardKey, config: _config!),
+          TransactionsScreen(key: _transactionsKey, config: _config!),
         ],
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: _openAddTransaction,
         child: const Icon(Icons.add),
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _tabIndex,
+        onDestinationSelected: (i) => setState(() => _tabIndex = i),
+        destinations: const [
+          NavigationDestination(icon: Icon(Icons.dashboard), label: 'Dashboard'),
+          NavigationDestination(icon: Icon(Icons.receipt_long), label: 'Transactions'),
+        ],
       ),
     );
   }
