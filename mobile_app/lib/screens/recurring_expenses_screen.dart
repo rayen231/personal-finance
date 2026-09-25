@@ -42,16 +42,15 @@ class _RecurringExpensesScreenState extends State<RecurringExpensesScreen> {
     });
   }
 
-  // Pulling down must never silently discard local edits that haven't
-  // reached the server yet - see income_screen.dart's _refreshFromServer
-  // for the full rationale.
+  // Pulling down syncs the whole app, not just this screen's own data - see
+  // income_screen.dart's _refreshFromServer for the full rationale.
   Future<void> _refreshFromServer() async {
     setState(() => _refreshing = true);
     try {
       final api = ApiClient(widget.config);
-      await SyncService(api).processPendingOps();
-      final setup = await api.getSetup(_year);
-      await DbService.setCache(DataRefreshService.setupKey(_year), setup);
+      await SyncService(api).syncPending();
+      final now = DateTime.now();
+      await DataRefreshService(api).refreshMonth(now.year, now.month);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Refresh failed: $e')));

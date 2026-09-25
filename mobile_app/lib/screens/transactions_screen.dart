@@ -9,6 +9,7 @@ import '../services/db_service.dart';
 import '../services/sync_service.dart';
 import '../utils/type_style.dart';
 import '../widgets/month_selector.dart';
+import 'add_transaction_screen.dart';
 import 'edit_transaction_screen.dart';
 
 class TransactionsScreen extends StatefulWidget {
@@ -46,17 +47,15 @@ class TransactionsScreenState extends State<TransactionsScreen> {
     });
   }
 
-  // Also pushes queued edit/delete pending ops first (see
-  // income_screen.dart's _refreshFromServer) - importing transactions
-  // itself is additive-only (insertOrIgnore) so it's already safe, but an
-  // edit or delete queued from this screen would otherwise sit stuck
-  // forever if the user only ever pulls-to-refresh here.
+  // Pulling down syncs the whole app for this month, not just the
+  // transaction list - see income_screen.dart's _refreshFromServer for the
+  // full rationale.
   Future<void> _refreshFromServer() async {
     setState(() => _refreshing = true);
     try {
       final api = ApiClient(widget.config);
-      await SyncService(api).processPendingOps();
-      await DataRefreshService(api).importTransactionsOnly(_year, _month);
+      await SyncService(api).syncPending();
+      await DataRefreshService(api).refreshMonth(_year, _month);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Refresh failed: $e')));
@@ -79,6 +78,13 @@ class TransactionsScreenState extends State<TransactionsScreen> {
       MaterialPageRoute(builder: (_) => EditTransactionScreen(tx: tx)),
     );
     if (changed == true) await _loadFromLocal();
+  }
+
+  Future<void> _duplicateTransaction(LocalTransaction tx) async {
+    final saved = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => AddTransactionScreen(config: widget.config, template: tx)),
+    );
+    if (saved == true) await _loadFromLocal();
   }
 
   Map<String, List<LocalTransaction>> get _groupedByDay {
@@ -147,24 +153,35 @@ class TransactionsScreenState extends State<TransactionsScreen> {
                               for (final t in dayTxs)
                                 ListTile(
                                   onTap: () => _openTransaction(t),
+                                  onLongPress: () => _duplicateTransaction(t),
                                   leading: CircleAvatar(
                                     backgroundColor: TypeStyle.color(t.type).withValues(alpha: 0.15),
                                     child: Icon(TypeStyle.icon(t.type), color: TypeStyle.color(t.type)),
                                   ),
                                   title: Text('${t.category} / ${t.subcategory}'),
                                   subtitle: Text(t.item),
-                                  trailing: Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    crossAxisAlignment: CrossAxisAlignment.end,
+                                  trailing: Row(
+                                    mainAxisSize: MainAxisSize.min,
                                     children: [
-                                      Text(
-                                        '${t.amount.toStringAsFixed(2)} DT',
-                                        style: const TextStyle(fontWeight: FontWeight.bold),
+                                      Column(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        crossAxisAlignment: CrossAxisAlignment.end,
+                                        children: [
+                                          Text(
+                                            '${t.amount.toStringAsFixed(2)} DT',
+                                            style: const TextStyle(fontWeight: FontWeight.bold),
+                                          ),
+                                          Icon(
+                                            t.synced ? Icons.cloud_done : Icons.cloud_upload_outlined,
+                                            size: 14,
+                                            color: t.synced ? Colors.green : Colors.orange,
+                                          ),
+                                        ],
                                       ),
-                                      Icon(
-                                        t.synced ? Icons.cloud_done : Icons.cloud_upload_outlined,
-                                        size: 14,
-                                        color: t.synced ? Colors.green : Colors.orange,
+                                      IconButton(
+                                        icon: const Icon(Icons.copy, size: 18),
+                                        tooltip: 'Duplicate (repeat this transaction today)',
+                                        onPressed: () => _duplicateTransaction(t),
                                       ),
                                     ],
                                   ),

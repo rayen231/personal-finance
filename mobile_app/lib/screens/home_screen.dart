@@ -76,11 +76,15 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  void _openScreen(Widget Function(AppConfig) builder) {
+  Future<void> _openScreen(Widget Function(AppConfig) builder) async {
     if (_config == null) return;
     Navigator.of(context).pop(); // close the drawer
-    Navigator.of(context)
-        .push(MaterialPageRoute(builder: (_) => builder(_config!)));
+    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => builder(_config!)));
+    // Income/Plan/Manage Categories/etc. can all change data the Dashboard
+    // and Transactions tabs show - reload them from cache (no network call)
+    // on return so coming back doesn't show stale figures until the next
+    // explicit sync.
+    await _reloadTabsFromCache();
   }
 
   Future<void> _openAddTransaction() async {

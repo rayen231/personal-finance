@@ -158,17 +158,14 @@ class _PlanScreenState extends State<PlanScreen> {
     }
   }
 
-  // Pulling down must never silently discard local edits that haven't
-  // reached the server yet - see income_screen.dart's _refreshFromServer
-  // for the full rationale.
+  // Pulling down syncs the whole app for this month, not just this screen's
+  // own data - see income_screen.dart's _refreshFromServer for the full
+  // rationale.
   Future<void> _refreshFromServer() async {
     setState(() => _saving = true);
     try {
-      await SyncService(_api).processPendingOps();
-      final setup = await _api.getSetup(_year);
-      await DbService.setCache(DataRefreshService.setupKey(_year), setup);
-      final plan = await _api.getPlan(_year, _month);
-      await DbService.setCache(DataRefreshService.planKey(_year, _month), plan);
+      await SyncService(_api).syncPending();
+      await DataRefreshService(_api).refreshMonth(_year, _month);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Refresh failed: $e')));

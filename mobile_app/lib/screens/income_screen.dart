@@ -42,18 +42,18 @@ class _IncomeScreenState extends State<IncomeScreen> {
     });
   }
 
-  /// Pulling down must never silently discard local edits that haven't
-  /// reached the server yet - it pushes any queued pending ops first (same
-  /// as Sync Now), then fetches the fresh server state. Fetching first
-  /// would overwrite the optimistic local values with stale server data
-  /// before they'd ever been sent, making entered-but-unsynced income look
-  /// like it "disappeared".
+  /// Pulling down syncs the whole app for this month, not just this screen's
+  /// own data - it pushes any queued pending ops (and unsynced transactions)
+  /// first, same as Sync Now, then refreshes setup/income/plan/summary
+  /// together so switching to another screen afterward is already fresh
+  /// too. Fetching before pushing would overwrite optimistic local values
+  /// with stale server data before they'd ever been sent, making
+  /// entered-but-unsynced income look like it "disappeared".
   Future<void> _refreshFromServer() async {
     setState(() => _refreshing = true);
     try {
-      await SyncService(_api).processPendingOps();
-      final data = await _api.getIncome(_year, _month);
-      await DbService.setCache(DataRefreshService.incomeKey(_year, _month), data);
+      await SyncService(_api).syncPending();
+      await DataRefreshService(_api).refreshMonth(_year, _month);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Refresh failed: $e')));

@@ -11,21 +11,30 @@ const _types = ['Expense', 'Free Money', 'Investment'];
 
 class AddTransactionScreen extends StatefulWidget {
   final AppConfig config;
-  const AddTransactionScreen({super.key, required this.config});
+  // Prefills every field from a previous transaction (only the date resets
+  // to today) - the "Duplicate" action on Transactions, for things typed in
+  // from scratch far too often (e.g. "5 DT gas" every few days).
+  final LocalTransaction? template;
+  const AddTransactionScreen({super.key, required this.config, this.template});
 
   @override
   State<AddTransactionScreen> createState() => _AddTransactionScreenState();
 }
 
 class _AddTransactionScreenState extends State<AddTransactionScreen> {
-  final _itemController = TextEditingController();
-  final _amountController = TextEditingController();
-  final _subcategoryTextController = TextEditingController();
+  late final _itemController = TextEditingController(text: widget.template?.item ?? '');
+  late final _amountController =
+      TextEditingController(text: widget.template?.amount.toStringAsFixed(2) ?? '');
+  late final _subcategoryTextController = TextEditingController(
+    text: (widget.template != null && widget.template!.type != 'Expense')
+        ? widget.template!.subcategory
+        : '',
+  );
 
   DateTime _date = DateTime.now();
-  String _type = 'Expense';
-  String? _category;
-  String? _subcategory;
+  late String _type = widget.template?.type ?? 'Expense';
+  late String? _category = widget.template?.category;
+  late String? _subcategory = widget.template?.subcategory;
 
   List<String> _expenseCategories = [];
   List<String> _freeMoneyCategories = [];
@@ -206,7 +215,7 @@ class _AddTransactionScreenState extends State<AddTransactionScreen> {
     }
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Add Transaction')),
+      appBar: AppBar(title: Text(widget.template != null ? 'Duplicate Transaction' : 'Add Transaction')),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(

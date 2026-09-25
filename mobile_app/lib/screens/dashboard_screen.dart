@@ -6,9 +6,12 @@ import '../models/transaction.dart';
 import '../services/api_client.dart';
 import '../services/data_refresh_service.dart';
 import '../services/db_service.dart';
+import '../services/local_summary_service.dart';
 import '../services/sync_service.dart';
 import '../utils/type_style.dart';
 import '../widgets/month_selector.dart';
+import 'category_transactions_screen.dart';
+import 'income_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   final AppConfig config;
@@ -46,9 +49,13 @@ class DashboardScreenState extends State<DashboardScreen> {
     });
     try {
       final cached = await DbService.getCache(DataRefreshService.summaryKey(_year, _month));
+      // Recomputed locally so a transaction added but not yet synced shows
+      // up immediately - the raw server-cached summary is only a fallback
+      // for before income/plan have ever been synced at all.
+      final localSummary = await LocalSummaryService.compute(_year, _month);
       final txs = await DbService.listForMonth(_year, _month);
       setState(() {
-        _summary = cached?.$1 as Map<String, dynamic>?;
+        _summary = localSummary ?? (cached?.$1 as Map<String, dynamic>?);
         _lastUpdated = cached?.$2;
         _monthTransactions = txs;
         _loading = false;
@@ -68,7 +75,7 @@ class DashboardScreenState extends State<DashboardScreen> {
     setState(() => _refreshing = true);
     try {
       final api = ApiClient(widget.config);
-      await SyncService(api).processPendingOps();
+      await SyncService(api).syncPending();
       await DataRefreshService(api).refreshMonth(_year, _month);
       await _loadFromCache();
     } catch (e) {
@@ -207,15 +214,24 @@ class DashboardScreenState extends State<DashboardScreen> {
               ),
             ),
           const SizedBox(height: 16),
-          Row(
-            children: [
-              Icon(Icons.arrow_downward, size: 16, color: scheme.onPrimary.withValues(alpha: 0.85)),
-              const SizedBox(width: 4),
-              Text(
-                'Received ${actualIncome.toStringAsFixed(0)} DT',
-                style: TextStyle(color: scheme.onPrimary.withValues(alpha: 0.85), fontSize: 13),
-              ),
-            ],
+          InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => IncomeScreen(config: widget.config)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.arrow_downward, size: 16, color: scheme.onPrimary.withValues(alpha: 0.85)),
+                const SizedBox(width: 4),
+                Text(
+                  'Received ${actualIncome.toStringAsFixed(0)} DT',
+                  style: TextStyle(color: scheme.onPrimary.withValues(alpha: 0.85), fontSize: 13),
+                ),
+                const SizedBox(width: 4),
+                Icon(Icons.chevron_right, size: 16, color: scheme.onPrimary.withValues(alpha: 0.6)),
+              ],
+            ),
           ),
         ],
       ),
@@ -237,18 +253,21 @@ class DashboardScreenState extends State<DashboardScreen> {
           value: s['necessary_expenses_actual'],
           icon: Icons.shopping_cart,
           color: TypeStyle.color('Expense'),
+          onTap: () => _openCategoryTransactions('Expense'),
         ),
         _StatCard(
           label: 'Free Money Spent',
           value: freeMoney['spent'],
           icon: Icons.celebration,
           color: TypeStyle.color('Free Money'),
+          onTap: () => _openCategoryTransactions('Free Money'),
         ),
         _StatCard(
           label: 'Investments',
           value: s['investments_actual'],
           icon: Icons.trending_up,
           color: TypeStyle.color('Investment'),
+          onTap: () => _openCategoryTransactions('Investment'),
         ),
         _StatCard(
           label: 'Extra Savings',
@@ -258,6 +277,13 @@ class DashboardScreenState extends State<DashboardScreen> {
         ),
       ],
     );
+  }
+
+  Future<void> _openCategoryTransactions(String type) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => CategoryTransactionsScreen(config: widget.config, type: type)),
+    );
+    await reloadFromCache();
   }
 
   String _formatWhen(DateTime d) {
@@ -274,46 +300,52 @@ class _StatCard extends StatelessWidget {
   final dynamic value;
   final IconData icon;
   final Color color;
+  final VoidCallback? onTap;
 
   const _StatCard({
     required this.label,
     required this.value,
     required this.icon,
     required this.color,
+    this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
     final amount = (value is num) ? value.toDouble() : 0.0;
     return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.15),
-                shape: BoxShape.circle,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.15),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(icon, color: color, size: 18),
               ),
-              child: Icon(icon, color: color, size: 18),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              label,
-              style: Theme.of(context).textTheme.bodySmall,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            Text(
-              '${amount.toStringAsFixed(2)} DT',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ],
+              const SizedBox(height: 6),
+              Text(
+                label,
+                style: Theme.of(context).textTheme.bodySmall,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              Text(
+                '${amount.toStringAsFixed(2)} DT',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
         ),
       ),
     );
