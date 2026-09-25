@@ -10,6 +10,7 @@ import 'add_transaction_screen.dart';
 import 'dashboard_screen.dart';
 import 'income_screen.dart';
 import 'manage_categories_screen.dart';
+import 'monthly_insights_screen.dart';
 import 'plan_screen.dart';
 import 'recurring_expenses_screen.dart';
 import 'settings_screen.dart';
@@ -214,6 +215,11 @@ class _HomeScreenState extends State<HomeScreen> {
               title: const Text('Recurring Expenses'),
               onTap: () =>
                   _openScreen((c) => RecurringExpensesScreen(config: c)),
+            ),
+            ListTile(
+              leading: const Icon(Icons.pie_chart),
+              title: const Text('Monthly Insights'),
+              onTap: () => _openScreen((c) => MonthlyInsightsScreen(config: c)),
             ),
             ListTile(
               leading: const Icon(Icons.calendar_view_month),

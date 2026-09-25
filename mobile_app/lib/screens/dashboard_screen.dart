@@ -12,6 +12,7 @@ import '../utils/type_style.dart';
 import '../widgets/month_selector.dart';
 import 'category_transactions_screen.dart';
 import 'income_screen.dart';
+import 'monthly_insights_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   final AppConfig config;
@@ -151,8 +152,20 @@ class DashboardScreenState extends State<DashboardScreen> {
             const SizedBox(height: 16),
             _buildStats(s),
             const SizedBox(height: 24),
-            Text('Spending by category', style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('Spending by category', style: Theme.of(context).textTheme.titleMedium),
+                TextButton.icon(
+                  icon: const Icon(Icons.pie_chart, size: 18),
+                  label: const Text('Insights'),
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => MonthlyInsightsScreen(config: widget.config)),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
             if (_expenseByCategory.isEmpty)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 24),
