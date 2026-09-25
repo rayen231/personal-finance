@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 
 import '../config/app_config.dart';
 import '../services/api_client.dart';
+import '../services/data_refresh_service.dart';
+import '../services/local_summary_service.dart';
 import '../services/sync_service.dart';
 
 const _monthAbbrev = [
@@ -10,6 +12,10 @@ const _monthAbbrev = [
   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
 ];
 
+/// Reads local cache/transactions only on open, same rule as every other
+/// screen - the network is touched only by an explicit pull-to-refresh
+/// (or Sync Now / the hourly timer elsewhere), never just by viewing this
+/// screen.
 class YearlyOverviewScreen extends StatefulWidget {
   final AppConfig config;
   const YearlyOverviewScreen({super.key, required this.config});
@@ -22,44 +28,48 @@ class _YearlyOverviewScreenState extends State<YearlyOverviewScreen> {
   final _year = DateTime.now().year;
   List<Map<String, dynamic>?> _monthly = List.filled(12, null);
   bool _loading = true;
-  String? _error;
+  bool _refreshing = false;
 
   @override
   void initState() {
     super.initState();
-    _load();
+    _loadFromCache();
   }
 
-  Future<void> _load() async {
+  Future<void> _loadFromCache() async {
+    setState(() => _loading = true);
+    // Only fetch through the current month - future months are
+    // "Not Started" and would just be zeros anyway.
+    final upTo = DateTime.now().year == _year ? DateTime.now().month : 12;
+    final results = await Future.wait([
+      for (var m = 1; m <= upTo; m++) LocalSummaryService.compute(_year, m),
+    ]);
+    if (!mounted) return;
     setState(() {
-      _loading = true;
-      _error = null;
+      _monthly = List.filled(12, null);
+      for (var i = 0; i < results.length; i++) {
+        _monthly[i] = results[i];
+      }
+      _loading = false;
     });
+  }
+
+  Future<void> _refreshFromServer() async {
+    setState(() => _refreshing = true);
     try {
       final api = ApiClient(widget.config);
-      // Push any queued local edits first so this overview reflects them,
-      // rather than the stale pre-edit server state - see
-      // income_screen.dart's _refreshFromServer for the full rationale.
       await SyncService(api).syncPending();
-      // Only fetch through the current month - future months are
-      // "Not Started" and would just be zeros anyway.
       final upTo = DateTime.now().year == _year ? DateTime.now().month : 12;
-      final results = await Future.wait([
-        for (var m = 1; m <= upTo; m++) api.getSummary(_year, m),
-      ]);
-      setState(() {
-        _monthly = List.filled(12, null);
-        for (var i = 0; i < results.length; i++) {
-          _monthly[i] = results[i];
-        }
-        _loading = false;
-      });
+      for (var m = 1; m <= upTo; m++) {
+        await DataRefreshService(api).refreshMonth(_year, m);
+      }
     } catch (e) {
-      setState(() {
-        _error = '$e';
-        _loading = false;
-      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Refresh failed: $e')));
+      }
     }
+    await _loadFromCache();
+    if (mounted) setState(() => _refreshing = false);
   }
 
   @override
@@ -68,24 +78,30 @@ class _YearlyOverviewScreenState extends State<YearlyOverviewScreen> {
       appBar: AppBar(title: Text('$_year Overview')),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : _error != null
-              ? Center(child: Text('Error: $_error'))
-              : RefreshIndicator(
-                  onRefresh: _load,
-                  child: ListView(
-                    padding: const EdgeInsets.all(16),
-                    children: [
-                      Text('Income vs Total Savings', style: Theme.of(context).textTheme.titleMedium),
-                      const SizedBox(height: 12),
-                      SizedBox(height: 220, child: _YearLineChart(monthly: _monthly)),
-                      const SizedBox(height: 24),
-                      Text('Monthly Breakdown', style: Theme.of(context).textTheme.titleMedium),
-                      const SizedBox(height: 8),
-                      for (var i = 0; i < 12; i++)
-                        if (_monthly[i] != null) _MonthRow(month: i + 1, data: _monthly[i]!),
-                    ],
-                  ),
-                ),
+          : RefreshIndicator(
+              onRefresh: _refreshFromServer,
+              child: ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  if (_refreshing) const LinearProgressIndicator(),
+                  if (_monthly.every((m) => m == null))
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 48),
+                      child: Center(child: Text('No cached data yet - pull down to sync.')),
+                    )
+                  else ...[
+                    Text('Income vs Total Savings', style: Theme.of(context).textTheme.titleMedium),
+                    const SizedBox(height: 12),
+                    SizedBox(height: 220, child: _YearLineChart(monthly: _monthly)),
+                    const SizedBox(height: 24),
+                    Text('Monthly Breakdown', style: Theme.of(context).textTheme.titleMedium),
+                    const SizedBox(height: 8),
+                    for (var i = 0; i < 12; i++)
+                      if (_monthly[i] != null) _MonthRow(month: i + 1, data: _monthly[i]!),
+                  ],
+                ],
+              ),
+            ),
     );
   }
 }
